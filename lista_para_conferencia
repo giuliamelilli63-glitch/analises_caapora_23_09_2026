@@ -1,0 +1,422 @@
+# ============================================================
+# CRIAR TABELA BOTÂNICA FINAL SIMPLIFICADA
+#
+# A partir de:
+# conferencia_final_reflora_powo.xlsx
+#
+# Saída:
+# tabela_botanica_final.xlsx
+#
+# COLUNAS:
+# - especie_referencia
+# - nome_aceito
+# - identificacao
+# - familia
+# - genero
+# - matriz
+# - habito
+# ============================================================
+
+
+# ============================================================
+# 0. PACOTES
+# ============================================================
+
+pacotes <- c(
+  "readxl",
+  "dplyr",
+  "stringr",
+  "openxlsx"
+)
+
+pacotes_faltantes <- pacotes[
+  !pacotes %in% rownames(installed.packages())
+]
+
+if (length(pacotes_faltantes) > 0) {
+  install.packages(pacotes_faltantes)
+}
+
+library(readxl)
+library(dplyr)
+library(stringr)
+library(openxlsx)
+
+
+# ============================================================
+# 1. CAMINHOS
+# ============================================================
+
+pasta_caapora <-
+  "C:/Users/giuli/OneDrive/Documentos/Caapora"
+
+pasta_taxonomia <- file.path(
+  pasta_caapora,
+  "taxonomia"
+)
+
+
+arquivo_entrada <- file.path(
+  pasta_taxonomia,
+  "conferencia_final_reflora_powo.xlsx"
+)
+
+
+arquivo_saida <- file.path(
+  pasta_taxonomia,
+  "tabela_botanica_final.xlsx"
+)
+
+
+# ============================================================
+# 2. LER BASE FINAL
+# ============================================================
+
+dados <- read_excel(
+  arquivo_entrada,
+  sheet = "Base_final"
+)
+
+dados <- as.data.frame(
+  dados,
+  stringsAsFactors = FALSE,
+  check.names = FALSE
+)
+
+
+cat(
+  "\nNúmero de registros na entrada:",
+  nrow(dados),
+  "\n"
+)
+
+
+# ============================================================
+# 3. FUNÇÃO PARA RETIRAR AUTORIA E INFRAESPÉCIE
+#
+# IMPORTANTE:
+# Esta função será aplicada SOMENTE às identificações
+# completas.
+#
+# Mantém apenas:
+#
+# Gênero + epíteto específico
+#
+# Exemplos:
+#
+# Adenocalymma acutissimum
+# -> Adenocalymma acutissimum
+#
+# Schinus terebinthifolius Raddi
+# -> Schinus terebinthifolius
+#
+# Lantana nivea subsp. nivea
+# -> Lantana nivea
+#
+# Roupala montana var. brasiliensis
+# -> Roupala montana
+#
+# ============================================================
+
+reduzir_para_especie <- function(x) {
+
+  x <- as.character(x)
+
+  resultado <- rep(
+    NA_character_,
+    length(x)
+  )
+
+  valido <-
+    !is.na(x) &
+    trimws(x) != ""
+
+  x_limpo <- str_squish(
+    x[valido]
+  )
+
+  partes <- str_split(
+    x_limpo,
+    "\\s+"
+  )
+
+  resultado[valido] <- vapply(
+    partes,
+    function(p) {
+
+      if (length(p) >= 2) {
+
+        paste(
+          p[1],
+          p[2]
+        )
+
+      } else {
+
+        p[1]
+
+      }
+    },
+    FUN.VALUE = character(1)
+  )
+
+  resultado
+}
+
+
+# ============================================================
+# 4. PADRONIZAR IDENTIFICAÇÃO
+# ============================================================
+
+dados <- dados %>%
+
+  mutate(
+
+    identificacao_final =
+      identificacao %>%
+      as.character() %>%
+      str_squish() %>%
+      str_to_lower()
+
+  )
+
+
+# ============================================================
+# 5. CRIAR NOME ACEITO SIMPLIFICADO
+#
+# COMPLETA:
+# gênero + espécie
+#
+# INCOMPLETA:
+# mantém o gênero final
+#
+# INDETERMINADA:
+# NA
+# ============================================================
+
+dados <- dados %>%
+
+  mutate(
+
+    nome_aceito_simplificado =
+      case_when(
+
+        identificacao_final == "completa" ~
+          reduzir_para_especie(
+            nome_final
+          ),
+
+        identificacao_final == "incompleta" &
+          !is.na(genero_final) ~
+          genero_final,
+
+        TRUE ~
+          NA_character_
+
+      )
+
+  )
+
+
+# ============================================================
+# 6. IDENTIFICAR EM QUAL MATRIZ O NOME ESTÁ PRESENTE
+#
+# ocorrência = ocorrencia == 1
+# abundância = abundancia == 1
+#
+# Se estiver nas duas:
+# "ocorrencia; abundancia"
+# ============================================================
+
+dados <- dados %>%
+
+  mutate(
+
+    matriz =
+      case_when(
+
+        ocorrencia == 1 &
+          abundancia == 1 ~
+          "ocorrencia; abundancia",
+
+        ocorrencia == 1 ~
+          "ocorrencia",
+
+        abundancia == 1 ~
+          "abundancia",
+
+        TRUE ~
+          NA_character_
+
+      )
+
+  )
+
+
+# ============================================================
+# 7. MONTAR TABELA FINAL
+# ============================================================
+
+tabela_final <- dados %>%
+
+  transmute(
+
+    especie_referencia =
+      especie,
+
+    nome_aceito =
+      nome_aceito_simplificado,
+
+    identificacao =
+      identificacao_final,
+
+    familia =
+      familia_final,
+
+    genero =
+      genero_final,
+
+    matriz =
+      matriz,
+
+    habito =
+      lifeForm_padronizado
+
+  )
+
+
+# ============================================================
+# 8. CONFERÊNCIAS
+# ============================================================
+
+cat("\n============================================\n")
+cat("RESUMO DA TABELA FINAL\n")
+cat("============================================\n\n")
+
+
+cat(
+  "Total de registros:",
+  nrow(tabela_final),
+  "\n"
+)
+
+
+cat(
+  "Identificações completas:",
+  sum(
+    tabela_final$identificacao == "completa",
+    na.rm = TRUE
+  ),
+  "\n"
+)
+
+
+cat(
+  "Identificações incompletas:",
+  sum(
+    tabela_final$identificacao == "incompleta",
+    na.rm = TRUE
+  ),
+  "\n"
+)
+
+
+cat(
+  "Identificações indeterminadas:",
+  sum(
+    tabela_final$identificacao == "indeterminada",
+    na.rm = TRUE
+  ),
+  "\n"
+)
+
+
+cat(
+  "Sem nome aceito:",
+  sum(
+    is.na(tabela_final$nome_aceito)
+  ),
+  "\n"
+)
+
+
+cat(
+  "Sem família:",
+  sum(
+    is.na(tabela_final$familia)
+  ),
+  "\n"
+)
+
+
+cat(
+  "Sem hábito:",
+  sum(
+    is.na(tabela_final$habito)
+  ),
+  "\n"
+)
+
+
+# ============================================================
+# 9. VISUALIZAR PRIMEIROS REGISTROS
+# ============================================================
+
+print(
+  head(
+    tabela_final,
+    20
+  )
+)
+
+
+# ============================================================
+# 10. SALVAR
+# ============================================================
+
+wb <- createWorkbook()
+
+addWorksheet(
+  wb,
+  "Tabela_final"
+)
+
+writeData(
+  wb,
+  "Tabela_final",
+  tabela_final
+)
+
+setColWidths(
+  wb,
+  "Tabela_final",
+  cols = 1:ncol(tabela_final),
+  widths = "auto"
+)
+
+freezePane(
+  wb,
+  "Tabela_final",
+  firstRow = TRUE
+)
+
+addFilter(
+  wb,
+  "Tabela_final",
+  rows = 1,
+  cols = 1:ncol(tabela_final)
+)
+
+
+saveWorkbook(
+  wb,
+  arquivo_saida,
+  overwrite = TRUE
+)
+
+
+cat(
+  "\nArquivo salvo em:\n",
+  arquivo_saida,
+  "\n"
+)
