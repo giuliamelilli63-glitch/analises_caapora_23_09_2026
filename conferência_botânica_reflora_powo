@@ -1097,6 +1097,27 @@ taxon$genero_aceito_reflora <-
 
 
 # ============================================================
+# STATUS NOMENCLATURAL DO NOME ACEITO REFLORA
+#
+# IMPORTANTE:
+# Esta informação corresponde ao NOME ACEITO (nome_aceito_reflora),
+# e não necessariamente ao nome originalmente encontrado.
+# ============================================================
+
+taxon$status_nomenclatural_aceito_reflora <-
+  ifelse(
+    
+    !is.na(indice_aceito),
+    
+    taxon$nomenclaturalStatus[
+      indice_aceito
+    ],
+    
+    taxon$nomenclaturalStatus
+  )
+
+
+# ============================================================
 # 14. RELAÇÃO COM NOME ACEITO
 # ============================================================
 
@@ -1456,6 +1477,13 @@ especies$autoria_reflora <-
 especies$status_taxonomico_reflora <-
   extrair_conferidos(
     lookup_exato$status_padronizado
+  )
+
+# Status nomenclatural do NOME ACEITO no REFLORA
+# Deve corresponder a nome_aceito_reflora.
+especies$status_nomenclatural_reflora <-
+  extrair_conferidos(
+    lookup_exato$status_nomenclatural_aceito_reflora
   )
 
 especies$relacao_nome_aceito_reflora <-
@@ -2211,8 +2239,25 @@ especies <- especies %>%
 
 
 # ============================================================
-# 30. REFLORA RESOLVIDO, MAS SEM LIFEFORM
-#     -> PROCURAR NOME ACEITO NO POWO
+# STATUS NOMENCLATURAIS DO REFLORA QUE DEVEM SER
+# RECONFERIDOS NO POWO
+# ============================================================
+
+status_reflora_revisar_powo <- c(
+  "NOME_ILEGITIMO",
+  "NOME_LEGITIMO_MAS_INCORRETO",
+  "NOME_MAL_APLICADO",
+  "NOME_APLICACAO_INCERTA",
+  "NOME_NAO_VALIDAMENTE_PUBLICADO"
+)
+
+
+# ============================================================
+# 30. REFLORA: COMPLEMENTO/REVISÃO NO POWO
+#     -> procura no POWO quando:
+#        a) REFLORA está sem LifeForm; OU
+#        b) o nome aceito REFLORA possui status nomenclatural
+#           que exige reconferência
 #
 # IMPORTANTE:
 # O nome do REFLORA pode aparecer no POWO como:
@@ -2233,12 +2278,16 @@ reflora_sem_lifeform <- especies %>%
     
     conferencia_reflora,
     
-    is.na(
-      lifeForm_reflora
-    ) |
-      trimws(
+    (
+      is.na(
         lifeForm_reflora
-      ) == ""
+      ) |
+        trimws(
+          lifeForm_reflora
+        ) == "" |
+        status_nomenclatural_reflora %in%
+        status_reflora_revisar_powo
+    )
   ) %>%
   
   transmute(
@@ -2267,7 +2316,7 @@ reflora_sem_lifeform <- especies %>%
 
 
 cat("\n============================================\n")
-cat("REFLORA SEM LIFEFORM -> POWO\n")
+cat("REFLORA: SEM LIFEFORM OU STATUS NOMENCLATURAL PARA REVISAR -> POWO\n")
 cat("============================================\n\n")
 
 cat(
@@ -2307,6 +2356,12 @@ lifeform_powo_reflora <-
     taxonid_aceito_lifeform_powo =
       taxonid_aceito_powo,
     
+    familia_aceita_lifeform_powo =
+      familia_aceita_powo,
+    
+    genero_aceito_lifeform_powo =
+      genero_aceito_powo,
+    
     lifeform_nome_encontrado_complemento_powo =
       lifeform_nome_encontrado_powo,
     
@@ -2336,7 +2391,9 @@ especies$chave_lifeform_powo <-
         ) |
           trimws(
             especies$lifeForm_reflora
-          ) == ""
+          ) == "" |
+          especies$status_nomenclatural_reflora %in%
+          status_reflora_revisar_powo
       ),
     
     normalizar_nome(
@@ -2496,6 +2553,17 @@ especies <- especies %>%
     nome_final =
       case_when(
         
+        # REFLORA com status nomenclatural problemático:
+        # se POWO resolver, usa o nome aceito do POWO
+        eh_completa &
+          conferencia_reflora &
+          status_nomenclatural_reflora %in%
+          status_reflora_revisar_powo &
+          decisao_lifeform_powo %in%
+          c("ACCEPTED", "SYNONYM") &
+          !is.na(nome_aceito_lifeform_powo) ~
+          nome_aceito_lifeform_powo,
+        
         eh_completa &
           conferencia_reflora ~
           nome_aceito_reflora,
@@ -2528,6 +2596,15 @@ especies <- especies %>%
     
     familia_final =
       case_when(
+        
+        eh_completa &
+          conferencia_reflora &
+          status_nomenclatural_reflora %in%
+          status_reflora_revisar_powo &
+          decisao_lifeform_powo %in%
+          c("ACCEPTED", "SYNONYM") &
+          !is.na(familia_aceita_lifeform_powo) ~
+          familia_aceita_lifeform_powo,
         
         eh_completa &
           conferencia_reflora ~
@@ -2563,6 +2640,15 @@ especies <- especies %>%
       case_when(
         
         eh_completa &
+          conferencia_reflora &
+          status_nomenclatural_reflora %in%
+          status_reflora_revisar_powo &
+          decisao_lifeform_powo %in%
+          c("ACCEPTED", "SYNONYM") &
+          !is.na(genero_aceito_lifeform_powo) ~
+          genero_aceito_lifeform_powo,
+        
+        eh_completa &
           conferencia_reflora ~
           genero_reflora,
         
@@ -2594,6 +2680,15 @@ especies <- especies %>%
     
     fonte_taxonomia =
       case_when(
+        
+        eh_completa &
+          conferencia_reflora &
+          status_nomenclatural_reflora %in%
+          status_reflora_revisar_powo &
+          decisao_lifeform_powo %in%
+          c("ACCEPTED", "SYNONYM") &
+          !is.na(nome_aceito_lifeform_powo) ~
+          "POWO_REVISAO_REFLORA",
         
         eh_completa &
           conferencia_reflora ~
@@ -2648,6 +2743,17 @@ especies <- especies %>%
     lifeForm_final =
       case_when(
         
+        # REFLORA com status nomenclatural para revisão:
+        # se POWO resolveu e possui LifeForm, usa o hábito do táxon aceito POWO
+        eh_completa &
+          conferencia_reflora &
+          status_nomenclatural_reflora %in%
+          status_reflora_revisar_powo &
+          decisao_lifeform_powo %in%
+          c("ACCEPTED", "SYNONYM") &
+          !is.na(lifeform_complemento_powo) ~
+          lifeform_complemento_powo,
+        
         # REFLORA possui LifeForm
         eh_completa &
           conferencia_reflora &
@@ -2696,6 +2802,15 @@ especies <- especies %>%
     
     fonte_lifeForm =
       case_when(
+        
+        eh_completa &
+          conferencia_reflora &
+          status_nomenclatural_reflora %in%
+          status_reflora_revisar_powo &
+          decisao_lifeform_powo %in%
+          c("ACCEPTED", "SYNONYM") &
+          !is.na(lifeform_complemento_powo) ~
+          "POWO_REVISAO_REFLORA",
         
         eh_completa &
           conferencia_reflora &
@@ -2817,6 +2932,15 @@ especies <- especies %>%
       case_when(
         
         eh_completa &
+          conferencia_reflora &
+          status_nomenclatural_reflora %in%
+          status_reflora_revisar_powo &
+          decisao_lifeform_powo %in%
+          c("ACCEPTED", "SYNONYM") &
+          !is.na(nome_aceito_lifeform_powo) ~
+          "COMPLETA_RESOLVIDA_POWO_REVISAO_REFLORA",
+        
+        eh_completa &
           conferencia_reflora ~
           "COMPLETA_RESOLVIDA_REFLORA",
         
@@ -2879,6 +3003,20 @@ especies <- especies %>%
   )
 
 
+# ------------------------------------------------------------
+# ORGANIZAR AS COLUNAS FINAIS LADO A LADO
+# nome final -> família -> gênero -> hábito padronizado
+# ------------------------------------------------------------
+
+especies <- especies %>%
+  relocate(
+    familia_final,
+    genero_final,
+    lifeForm_padronizado,
+    .after = nome_final
+  )
+
+
 # ============================================================
 # 38. DIAGNÓSTICOS
 # ============================================================
@@ -2897,6 +3035,7 @@ completas_nao_resolvidas <- especies %>%
     !status_final %in%
       c(
         "COMPLETA_RESOLVIDA_REFLORA",
+        "COMPLETA_RESOLVIDA_POWO_REVISAO_REFLORA",
         "COMPLETA_RESOLVIDA_POWO_ACCEPTED",
         "COMPLETA_RESOLVIDA_POWO_SYNONYM"
       )
@@ -3723,4 +3862,3 @@ if (
 }
 
 cat("\n============================================\n")
-
