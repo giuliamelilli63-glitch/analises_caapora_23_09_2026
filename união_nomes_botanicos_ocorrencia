@@ -1,0 +1,1512 @@
+# ============================================================
+# MATRIZ DE OCORRÊNCIA - ETAPA 1
+# HARMONIZAÇÃO COM A TABELA BOTÂNICA FINAL
+#
+# CORREÇÃO:
+#
+# ANTES de comparar os nomes com a tabela botânica:
+#
+# 1. selecionar somente inventários brasileiros;
+# 2. converter os valores desses inventários para numérico;
+# 3. manter somente espécies que realmente apresentam
+#    ocorrência (> 0) em pelo menos um inventário brasileiro;
+# 4. somente então verificar quais nomes estão ausentes
+#    da tabela botânica final.
+#
+# ============================================================
+
+
+# ============================================================
+# 0. PACOTES
+# ============================================================
+
+pacotes <- c(
+  "dplyr",
+  "readxl",
+  "stringr",
+  "openxlsx"
+)
+
+pacotes_faltantes <- pacotes[
+  !pacotes %in% rownames(installed.packages())
+]
+
+if (length(pacotes_faltantes) > 0) {
+  install.packages(pacotes_faltantes)
+}
+
+library(dplyr)
+library(readxl)
+library(stringr)
+library(openxlsx)
+
+
+# ============================================================
+# 1. CAMINHOS
+# ============================================================
+
+pasta_caapora <-
+  "C:/Users/giuli/OneDrive/Documentos/Caapora"
+
+
+# ------------------------------------------------------------
+# MATRIZ ORIGINAL DE OCORRÊNCIA
+# ------------------------------------------------------------
+
+arquivo_matriz <- file.path(
+  pasta_caapora,
+  "Matrizes_ocorrência",
+  "Matriz_original_ocorrencia.csv"
+)
+
+
+# ------------------------------------------------------------
+# BASE DE REFERÊNCIAS
+#
+# Todos os inventários presentes na aba "Referencias"
+# já correspondem aos inventários selecionados do Brasil.
+# ------------------------------------------------------------
+
+arquivo_referencia <- file.path(
+  pasta_caapora,
+  "Matriz_refencia",
+  "caapora_base_referencias_1.xlsx"
+)
+
+
+# ------------------------------------------------------------
+# TABELA BOTÂNICA FINAL
+# ------------------------------------------------------------
+
+arquivo_taxonomia <- file.path(
+  pasta_caapora,
+  "taxonomia",
+  "tabela_botanica_final.xlsx"
+)
+
+
+# ------------------------------------------------------------
+# SAÍDA PRINCIPAL
+# ------------------------------------------------------------
+
+arquivo_saida <- file.path(
+  pasta_caapora,
+  "Matrizes_ocorrência",
+  "Matriz_original_ocorrencia_1.csv"
+)
+
+
+# ------------------------------------------------------------
+# RELATÓRIO
+# ------------------------------------------------------------
+
+arquivo_relatorio <- file.path(
+  pasta_caapora,
+  "Matrizes_ocorrência",
+  "Relatorio_Matriz_original_ocorrencia_1.xlsx"
+)
+
+
+# ------------------------------------------------------------
+# LISTA DE NOMES QUE REALMENTE PRECISAM SER CONFERIDOS
+# ------------------------------------------------------------
+
+arquivo_nomes_ausentes <- file.path(
+  pasta_caapora,
+  "Matrizes_ocorrência",
+  "ATENCAO_nomes_ausentes_tabela_botanica.xlsx"
+)
+
+
+# ============================================================
+# 2. CONFERIR ARQUIVOS
+# ============================================================
+
+if (!file.exists(arquivo_matriz)) {
+  
+  stop(
+    paste0(
+      "Matriz de ocorrência não encontrada:\n",
+      arquivo_matriz
+    )
+  )
+}
+
+if (!file.exists(arquivo_referencia)) {
+  
+  stop(
+    paste0(
+      "Base de referências não encontrada:\n",
+      arquivo_referencia
+    )
+  )
+}
+
+if (!file.exists(arquivo_taxonomia)) {
+  
+  stop(
+    paste0(
+      "Tabela botânica final não encontrada:\n",
+      arquivo_taxonomia
+    )
+  )
+}
+
+
+# ============================================================
+# 3. LER MATRIZ ORIGINAL
+# ============================================================
+
+matriz_original <- read.csv2(
+  arquivo_matriz,
+  header = TRUE,
+  stringsAsFactors = FALSE,
+  check.names = FALSE,
+  fileEncoding = "latin1"
+)
+
+cat(
+  "\n============================================\n",
+  "MATRIZ ORIGINAL\n",
+  "============================================\n",
+  sep = ""
+)
+
+cat(
+  "Linhas:",
+  nrow(matriz_original),
+  "\n"
+)
+
+cat(
+  "Colunas:",
+  ncol(matriz_original),
+  "\n"
+)
+
+
+# ============================================================
+# 4. CONFERIR COLUNA especie
+# ============================================================
+
+if (!"especie" %in% names(matriz_original)) {
+  
+  stop(
+    "A coluna 'especie' não foi encontrada na matriz original."
+  )
+}
+
+
+# ============================================================
+# 5. IDENTIFICAR INVENTÁRIOS DA MATRIZ ORIGINAL
+# ============================================================
+
+inventarios_matriz <- grep(
+  "^t[0-9]+$",
+  names(matriz_original),
+  value = TRUE
+)
+
+if (length(inventarios_matriz) == 0) {
+  
+  stop(
+    "Nenhuma coluna de inventário no padrão t + número foi encontrada."
+  )
+}
+
+cat(
+  "\nInventários encontrados na matriz original:",
+  length(inventarios_matriz),
+  "\n"
+)
+
+
+# ============================================================
+# 6. LER ABA "Referencias"
+# ============================================================
+
+referencia <- read_excel(
+  arquivo_referencia,
+  sheet = "Referencias"
+)
+
+referencia <- as.data.frame(
+  referencia,
+  stringsAsFactors = FALSE,
+  check.names = FALSE
+)
+
+if (!"ponto" %in% names(referencia)) {
+  
+  stop(
+    "A coluna 'ponto' não foi encontrada na aba 'Referencias'."
+  )
+}
+
+
+# ============================================================
+# 7. PREPARAR INVENTÁRIOS DO BRASIL
+# ============================================================
+
+inventarios_brasil <- referencia$ponto %>%
+  as.character() %>%
+  str_squish() %>%
+  str_to_lower()
+
+inventarios_brasil <- unique(
+  inventarios_brasil[
+    !is.na(inventarios_brasil) &
+      inventarios_brasil != ""
+  ]
+)
+
+cat(
+  "Inventários na aba Referencias:",
+  length(inventarios_brasil),
+  "\n"
+)
+
+
+# ============================================================
+# 8. COMPARAR INVENTÁRIOS
+# ============================================================
+
+inventarios_matriz_padronizados <-
+  str_to_lower(
+    str_squish(
+      inventarios_matriz
+    )
+  )
+
+inventarios_encontrados <-
+  inventarios_matriz[
+    inventarios_matriz_padronizados %in%
+      inventarios_brasil
+  ]
+
+inventarios_nao_encontrados <-
+  setdiff(
+    inventarios_brasil,
+    inventarios_matriz_padronizados
+  )
+
+inventarios_fora_referencia <-
+  inventarios_matriz[
+    !inventarios_matriz_padronizados %in%
+      inventarios_brasil
+  ]
+
+cat(
+  "\n============================================\n",
+  "INVENTÁRIOS\n",
+  "============================================\n",
+  sep = ""
+)
+
+cat(
+  "Inventários da referência encontrados:",
+  length(inventarios_encontrados),
+  "\n"
+)
+
+cat(
+  "Inventários da referência NÃO encontrados:",
+  length(inventarios_nao_encontrados),
+  "\n"
+)
+
+cat(
+  "Inventários da matriz fora da referência:",
+  length(inventarios_fora_referencia),
+  "\n"
+)
+
+if (length(inventarios_encontrados) == 0) {
+  
+  stop(
+    "Nenhum inventário da referência foi encontrado na matriz."
+  )
+}
+
+
+# ============================================================
+# 9. REDUZIR MATRIZ PARA INVENTÁRIOS DO BRASIL
+#
+# IMPORTANTE:
+#
+# A partir daqui ficam SOMENTE:
+#
+# especie
+# +
+# inventários brasileiros
+#
+# ============================================================
+
+matriz <- matriz_original %>%
+  select(
+    especie,
+    all_of(inventarios_encontrados)
+  )
+
+cat(
+  "\nColunas mantidas da matriz original:",
+  ncol(matriz),
+  "\n"
+)
+
+
+# ============================================================
+# 10. REMOVER LINHAS SEM NOME
+# ============================================================
+
+matriz <- matriz %>%
+  mutate(
+    especie = as.character(especie)
+  )
+
+linhas_sem_especie <- matriz %>%
+  filter(
+    is.na(especie) |
+      str_squish(especie) == ""
+  )
+
+matriz <- matriz %>%
+  filter(
+    !is.na(especie),
+    str_squish(especie) != ""
+  )
+
+cat(
+  "Linhas sem espécie removidas:",
+  nrow(linhas_sem_especie),
+  "\n"
+)
+
+
+# ============================================================
+# 11. CONVERTER VALORES DOS INVENTÁRIOS PARA NUMÉRICO
+#
+# FAZEMOS ISSO AGORA porque precisamos saber se cada nome
+# realmente ocorre em algum inventário brasileiro.
+# ============================================================
+
+matriz <- matriz %>%
+  mutate(
+    across(
+      all_of(inventarios_encontrados),
+      ~ suppressWarnings(
+        as.numeric(
+          str_replace(
+            as.character(.x),
+            ",",
+            "."
+          )
+        )
+      )
+    )
+  )
+
+
+# ============================================================
+# 12. IDENTIFICAR ESPÉCIES PRESENTES NOS INVENTÁRIOS BRASILEIROS
+#
+# CORREÇÃO PRINCIPAL
+#
+# Uma espécie só entra na conferência botânica se apresentar:
+#
+# valor > 0
+#
+# em pelo menos UM dos inventários brasileiros.
+# ============================================================
+
+numero_inventarios_brasil <-
+  rowSums(
+    matriz[
+      ,
+      inventarios_encontrados,
+      drop = FALSE
+    ] > 0,
+    na.rm = TRUE
+  )
+
+
+# Guardar o que está sendo excluído para conferência
+nomes_sem_ocorrencia_brasil <-
+  matriz[
+    numero_inventarios_brasil == 0,
+    "especie",
+    drop = FALSE
+  ] %>%
+  distinct() %>%
+  arrange(especie)
+
+
+# Manter SOMENTE espécies realmente presentes no Brasil
+matriz <-
+  matriz[
+    numero_inventarios_brasil > 0,
+    ,
+    drop = FALSE
+  ]
+
+
+cat(
+  "\n============================================\n",
+  "FILTRO DE OCORRÊNCIA NOS INVENTÁRIOS BRASILEIROS\n",
+  "============================================\n",
+  sep = ""
+)
+
+cat(
+  "Nomes sem ocorrência nos inventários brasileiros:",
+  nrow(nomes_sem_ocorrencia_brasil),
+  "\n"
+)
+
+cat(
+  "Linhas mantidas após filtro brasileiro:",
+  nrow(matriz),
+  "\n"
+)
+
+cat(
+  "Nomes únicos realmente presentes nos inventários brasileiros:",
+  n_distinct(matriz$especie),
+  "\n"
+)
+
+
+# ============================================================
+# 13. CRIAR CHAVE TAXONÔMICA
+# ============================================================
+
+matriz <- matriz %>%
+  mutate(
+    especie_referencia = especie,
+    
+    chave_taxonomica =
+      especie %>%
+      str_squish() %>%
+      str_to_lower()
+  )
+
+
+# ============================================================
+# 14. LER TABELA BOTÂNICA FINAL
+# ============================================================
+
+taxonomia <- read_excel(
+  arquivo_taxonomia,
+  sheet = "Tabela_final"
+)
+
+taxonomia <- as.data.frame(
+  taxonomia,
+  stringsAsFactors = FALSE,
+  check.names = FALSE
+)
+
+cat(
+  "\n============================================\n",
+  "TABELA BOTÂNICA FINAL\n",
+  "============================================\n",
+  sep = ""
+)
+
+cat(
+  "Linhas:",
+  nrow(taxonomia),
+  "\n"
+)
+
+
+# ============================================================
+# 15. CONFERIR COLUNAS DA TABELA FINAL
+# ============================================================
+
+colunas_taxonomia <- c(
+  "especie_referencia",
+  "nome_aceito",
+  "identificacao",
+  "familia",
+  "genero",
+  "matriz",
+  "habito"
+)
+
+faltando_taxonomia <- setdiff(
+  colunas_taxonomia,
+  names(taxonomia)
+)
+
+if (length(faltando_taxonomia) > 0) {
+  
+  stop(
+    paste0(
+      "Colunas ausentes na tabela botânica final:\n",
+      paste(
+        faltando_taxonomia,
+        collapse = ", "
+      )
+    )
+  )
+}
+
+
+# ============================================================
+# 16. PREPARAR TABELA BOTÂNICA
+# ============================================================
+
+taxonomia <- taxonomia %>%
+  mutate(
+    
+    especie_referencia =
+      as.character(especie_referencia),
+    
+    chave_taxonomica =
+      especie_referencia %>%
+      str_squish() %>%
+      str_to_lower(),
+    
+    nome_aceito =
+      as.character(nome_aceito) %>%
+      str_squish(),
+    
+    identificacao =
+      as.character(identificacao) %>%
+      str_squish() %>%
+      str_to_lower(),
+    
+    familia =
+      as.character(familia) %>%
+      str_squish(),
+    
+    genero =
+      as.character(genero) %>%
+      str_squish(),
+    
+    habito =
+      as.character(habito) %>%
+      str_squish()
+  )
+
+
+# ============================================================
+# 17. CONFERIR DUPLICAÇÕES
+# ============================================================
+
+duplicacoes_taxonomia <- taxonomia %>%
+  filter(
+    !is.na(chave_taxonomica),
+    chave_taxonomica != ""
+  ) %>%
+  count(
+    chave_taxonomica,
+    name = "numero_registros"
+  ) %>%
+  filter(
+    numero_registros > 1
+  )
+
+cat(
+  "\nChaves repetidas na tabela botânica:",
+  nrow(duplicacoes_taxonomia),
+  "\n"
+)
+
+
+# ============================================================
+# 18. VERIFICAR CONFLITOS
+# ============================================================
+
+conflitos_taxonomia <- taxonomia %>%
+  filter(
+    !is.na(chave_taxonomica),
+    chave_taxonomica != ""
+  ) %>%
+  group_by(
+    chave_taxonomica
+  ) %>%
+  summarise(
+    
+    n_identificacao =
+      n_distinct(
+        identificacao,
+        na.rm = TRUE
+      ),
+    
+    n_nome_aceito =
+      n_distinct(
+        nome_aceito,
+        na.rm = TRUE
+      ),
+    
+    identificacoes =
+      paste(
+        sort(
+          unique(
+            na.omit(
+              identificacao
+            )
+          )
+        ),
+        collapse = " | "
+      ),
+    
+    nomes_aceitos =
+      paste(
+        sort(
+          unique(
+            na.omit(
+              nome_aceito
+            )
+          )
+        ),
+        collapse = " | "
+      ),
+    
+    .groups = "drop"
+  ) %>%
+  filter(
+    n_identificacao > 1 |
+      n_nome_aceito > 1
+  )
+
+cat(
+  "Chaves com conflito na tabela botânica:",
+  nrow(conflitos_taxonomia),
+  "\n"
+)
+
+if (nrow(conflitos_taxonomia) > 0) {
+  
+  write.xlsx(
+    conflitos_taxonomia,
+    file.path(
+      pasta_caapora,
+      "Matrizes_ocorrência",
+      "ATENCAO_conflitos_tabela_botanica.xlsx"
+    ),
+    overwrite = TRUE
+  )
+  
+  stop(
+    paste0(
+      "Existem ",
+      nrow(conflitos_taxonomia),
+      " conflitos na tabela botânica final. ",
+      "Veja ATENCAO_conflitos_tabela_botanica.xlsx"
+    )
+  )
+}
+
+
+# ============================================================
+# 19. CRIAR UMA LINHA POR CHAVE
+# ============================================================
+
+taxonomia_unica <- taxonomia %>%
+  filter(
+    !is.na(chave_taxonomica),
+    chave_taxonomica != ""
+  ) %>%
+  distinct(
+    chave_taxonomica,
+    .keep_all = TRUE
+  ) %>%
+  select(
+    chave_taxonomica,
+    nome_aceito,
+    identificacao,
+    familia,
+    genero,
+    habito
+  )
+
+
+# ============================================================
+# 20. UNIR MATRIZ BRASILEIRA À TABELA BOTÂNICA
+# ============================================================
+
+matriz_revisada <- matriz %>%
+  left_join(
+    taxonomia_unica,
+    by = "chave_taxonomica"
+  )
+
+
+# ============================================================
+# 21. IDENTIFICAR NOMES AUSENTES DA TABELA BOTÂNICA
+#
+# AGORA SIM:
+#
+# estes nomes pertencem a espécies que apresentam ocorrência
+# em pelo menos um dos inventários brasileiros selecionados.
+# ============================================================
+
+sem_tabela_botanica <- matriz_revisada %>%
+  filter(
+    is.na(identificacao)
+  ) %>%
+  select(
+    especie_referencia
+  ) %>%
+  distinct() %>%
+  arrange(
+    especie_referencia
+  )
+
+
+cat(
+  "\n============================================\n",
+  "CORRESPONDÊNCIA COM A TABELA BOTÂNICA\n",
+  "============================================\n",
+  sep = ""
+)
+
+cat(
+  "Nomes PRESENTES nos inventários brasileiros ",
+  "e ausentes da tabela botânica:",
+  nrow(sem_tabela_botanica),
+  "\n"
+)
+
+
+# ============================================================
+# 22. SEGURANÇA
+#
+# Se houver nomes ausentes:
+#
+# salvamos SOMENTE os nomes que realmente ocorrem nos
+# inventários brasileiros.
+# ============================================================
+
+if (nrow(sem_tabela_botanica) > 0) {
+  
+  write.xlsx(
+    sem_tabela_botanica,
+    arquivo_nomes_ausentes,
+    overwrite = TRUE
+  )
+  
+  cat(
+    "\nArquivo criado:\n",
+    arquivo_nomes_ausentes,
+    "\n"
+  )
+  
+  stop(
+    paste0(
+      "\nExistem ",
+      nrow(sem_tabela_botanica),
+      " nomes PRESENTES nos inventários brasileiros ",
+      "que ainda não existem na tabela botânica final.\n",
+      "Veja ATENCAO_nomes_ausentes_tabela_botanica.xlsx"
+    )
+  )
+}
+
+
+# ============================================================
+# 23. RESUMO DA IDENTIFICAÇÃO
+# ============================================================
+
+resumo_identificacao <- matriz_revisada %>%
+  count(
+    identificacao,
+    name = "numero_registros",
+    sort = TRUE
+  )
+
+cat(
+  "\n============================================\n",
+  "IDENTIFICAÇÃO DA TABELA BOTÂNICA FINAL\n",
+  "============================================\n",
+  sep = ""
+)
+
+print(
+  resumo_identificacao
+)
+
+
+# ============================================================
+# 24. SEPARAR REGISTROS EXCLUÍDOS
+# ============================================================
+
+identificacoes_excluidas <- matriz_revisada %>%
+  filter(
+    identificacao != "completa" |
+      is.na(identificacao)
+  )
+
+
+# ============================================================
+# 25. MANTER SOMENTE IDENTIFICAÇÕES COMPLETAS
+# ============================================================
+
+matriz_completas <- matriz_revisada %>%
+  filter(
+    identificacao == "completa"
+  )
+
+cat(
+  "\nIdentificações completas mantidas:",
+  nrow(matriz_completas),
+  "\n"
+)
+
+cat(
+  "Incompletas/indeterminadas excluídas:",
+  nrow(identificacoes_excluidas),
+  "\n"
+)
+
+
+# ============================================================
+# 26. CONFERIR COMPLETAS SEM NOME ACEITO
+# ============================================================
+
+completas_sem_nome_aceito <- matriz_completas %>%
+  filter(
+    is.na(nome_aceito) |
+      nome_aceito == ""
+  ) %>%
+  select(
+    especie_referencia,
+    identificacao,
+    familia,
+    genero,
+    habito
+  ) %>%
+  distinct()
+
+cat(
+  "Completas sem nome aceito:",
+  nrow(completas_sem_nome_aceito),
+  "\n"
+)
+
+if (nrow(completas_sem_nome_aceito) > 0) {
+  
+  write.xlsx(
+    completas_sem_nome_aceito,
+    file.path(
+      pasta_caapora,
+      "Matrizes_ocorrência",
+      "ATENCAO_completas_sem_nome_aceito.xlsx"
+    ),
+    overwrite = TRUE
+  )
+  
+  stop(
+    paste0(
+      "Existem ",
+      nrow(completas_sem_nome_aceito),
+      " identificações completas sem nome aceito. ",
+      "O cálculo foi interrompido."
+    )
+  )
+}
+
+
+# ============================================================
+# 27. TRANSFORMAR EM PRESENÇA/AUSÊNCIA
+#
+# Os valores já foram convertidos para numérico anteriormente.
+# ============================================================
+
+matriz_completas <- matriz_completas %>%
+  mutate(
+    across(
+      all_of(inventarios_encontrados),
+      ~ case_when(
+        is.na(.x) ~ NA_real_,
+        .x == 0 ~ 0,
+        .x > 0 ~ 1,
+        TRUE ~ NA_real_
+      )
+    )
+  )
+
+
+# ============================================================
+# 28. CONFERIR VALORES INVÁLIDOS
+# ============================================================
+
+valores <- unlist(
+  matriz_completas[
+    ,
+    inventarios_encontrados,
+    drop = FALSE
+  ],
+  use.names = FALSE
+)
+
+valores_invalidos <- valores[
+  !is.na(valores) &
+    !valores %in% c(0, 1)
+]
+
+cat(
+  "\nValores inválidos:",
+  length(valores_invalidos),
+  "\n"
+)
+
+if (length(valores_invalidos) > 0) {
+  
+  stop(
+    "Ainda existem valores diferentes de 0 ou 1."
+  )
+}
+
+
+# ============================================================
+# 29. IDENTIFICAR NOMES QUE SERÃO CONSOLIDADOS
+# ============================================================
+
+nomes_consolidados <- matriz_completas %>%
+  group_by(
+    nome_aceito
+  ) %>%
+  summarise(
+    
+    numero_linhas = n(),
+    
+    nomes_referencia =
+      paste(
+        sort(
+          unique(
+            especie_referencia
+          )
+        ),
+        collapse = " | "
+      ),
+    
+    .groups = "drop"
+  ) %>%
+  filter(
+    numero_linhas > 1
+  ) %>%
+  arrange(
+    desc(numero_linhas),
+    nome_aceito
+  )
+
+cat(
+  "Nomes aceitos com mais de uma linha original:",
+  nrow(nomes_consolidados),
+  "\n"
+)
+
+
+# ============================================================
+# 30. CONSOLIDAR POR NOME ACEITO
+#
+# Ocorrência:
+#
+# 0 + 0 -> 0
+# 0 + 1 -> 1
+# 1 + 1 -> 1
+#
+# Portanto usamos max().
+# ============================================================
+
+matriz_final <- matriz_completas %>%
+  group_by(
+    nome_aceito
+  ) %>%
+  summarise(
+    
+    especie_referencia =
+      paste(
+        sort(
+          unique(
+            especie_referencia
+          )
+        ),
+        collapse = " | "
+      ),
+    
+    familia = {
+      x <- na.omit(familia)
+      
+      if (length(x) == 0) {
+        NA_character_
+      } else {
+        x[1]
+      }
+    },
+    
+    genero = {
+      x <- na.omit(genero)
+      
+      if (length(x) == 0) {
+        NA_character_
+      } else {
+        x[1]
+      }
+    },
+    
+    habito = {
+      x <- na.omit(habito)
+      
+      if (length(x) == 0) {
+        NA_character_
+      } else {
+        paste(
+          sort(
+            unique(x)
+          ),
+          collapse = " | "
+        )
+      }
+    },
+    
+    across(
+      all_of(
+        inventarios_encontrados
+      ),
+      ~ {
+        
+        if (all(is.na(.x))) {
+          NA_real_
+        } else {
+          max(
+            .x,
+            na.rm = TRUE
+          )
+        }
+      }
+    ),
+    
+    .groups = "drop"
+  )
+
+
+# ============================================================
+# 31. ORGANIZAR MATRIZ FINAL
+# ============================================================
+
+matriz_final <- matriz_final %>%
+  select(
+    especie_referencia,
+    nome_aceito,
+    familia,
+    genero,
+    habito,
+    all_of(
+      inventarios_encontrados
+    )
+  )
+
+
+# ============================================================
+# 32. SEGURANÇA:
+# CONFERIR SE AINDA EXISTE ESPÉCIE SEM OCORRÊNCIA
+#
+# Em princípio deve dar ZERO, porque o filtro foi feito
+# antes da conferência taxonômica.
+# ============================================================
+
+numero_inventarios_especie <-
+  rowSums(
+    matriz_final[
+      ,
+      inventarios_encontrados,
+      drop = FALSE
+    ] > 0,
+    na.rm = TRUE
+  )
+
+especies_sem_ocorrencia <-
+  matriz_final[
+    numero_inventarios_especie == 0,
+    c(
+      "especie_referencia",
+      "nome_aceito",
+      "familia",
+      "genero",
+      "habito"
+    ),
+    drop = FALSE
+  ]
+
+matriz_final <-
+  matriz_final[
+    numero_inventarios_especie > 0,
+    ,
+    drop = FALSE
+  ]
+
+cat(
+  "\nEspécies sem ocorrência após harmonização:",
+  nrow(especies_sem_ocorrencia),
+  "\n"
+)
+
+
+# ============================================================
+# 33. CONFERIR DUPLICAÇÕES FINAIS
+# ============================================================
+
+duplicacoes_finais <- matriz_final %>%
+  count(
+    nome_aceito,
+    name = "numero_linhas"
+  ) %>%
+  filter(
+    numero_linhas > 1
+  )
+
+cat(
+  "Duplicações finais de nome aceito:",
+  nrow(duplicacoes_finais),
+  "\n"
+)
+
+if (nrow(duplicacoes_finais) > 0) {
+  
+  stop(
+    "Ainda existem nomes aceitos duplicados após consolidação."
+  )
+}
+
+
+# ============================================================
+# 34. CALCULAR RIQUEZA POR INVENTÁRIO
+# ============================================================
+
+riqueza <- data.frame(
+  
+  ponto =
+    inventarios_encontrados,
+  
+  riqueza =
+    vapply(
+      
+      inventarios_encontrados,
+      
+      function(ponto) {
+        
+        sum(
+          matriz_final[[ponto]] > 0,
+          na.rm = TRUE
+        )
+      },
+      
+      numeric(1)
+    ),
+  
+  stringsAsFactors = FALSE
+)
+
+
+# ============================================================
+# 35. ADICIONAR RIQUEZA À BASE DE REFERÊNCIAS
+# ============================================================
+
+referencia_com_riqueza <- referencia %>%
+  mutate(
+    chave_ponto =
+      ponto %>%
+      as.character() %>%
+      str_squish() %>%
+      str_to_lower()
+  ) %>%
+  left_join(
+    
+    riqueza %>%
+      mutate(
+        chave_ponto =
+          ponto %>%
+          str_squish() %>%
+          str_to_lower()
+      ) %>%
+      select(
+        chave_ponto,
+        riqueza
+      ),
+    
+    by = "chave_ponto"
+  ) %>%
+  select(
+    -chave_ponto
+  )
+
+
+# ============================================================
+# 36. RESUMO DA RIQUEZA
+# ============================================================
+
+cat(
+  "\n============================================\n",
+  "RIQUEZA\n",
+  "============================================\n",
+  sep = ""
+)
+
+cat(
+  "Inventários:",
+  nrow(riqueza),
+  "\n"
+)
+
+cat(
+  "Riqueza mínima:",
+  min(
+    riqueza$riqueza,
+    na.rm = TRUE
+  ),
+  "\n"
+)
+
+cat(
+  "Riqueza média:",
+  mean(
+    riqueza$riqueza,
+    na.rm = TRUE
+  ),
+  "\n"
+)
+
+cat(
+  "Riqueza mediana:",
+  median(
+    riqueza$riqueza,
+    na.rm = TRUE
+  ),
+  "\n"
+)
+
+cat(
+  "Riqueza máxima:",
+  max(
+    riqueza$riqueza,
+    na.rm = TRUE
+  ),
+  "\n"
+)
+
+
+# ============================================================
+# 37. RESUMO GERAL
+# ============================================================
+
+resumo <- data.frame(
+  
+  indicador = c(
+    
+    "Inventários na matriz original",
+    
+    "Inventários na aba Referencias",
+    
+    "Inventários brasileiros encontrados",
+    
+    "Inventários brasileiros não encontrados",
+    
+    "Nomes sem ocorrência nos inventários brasileiros",
+    
+    "Nomes presentes no Brasil ausentes da tabela botânica",
+    
+    "Identificações completas",
+    
+    "Identificações incompletas/indeterminadas excluídas",
+    
+    "Completas sem nome aceito",
+    
+    "Nomes aceitos com linhas consolidadas",
+    
+    "Espécies sem ocorrência após harmonização",
+    
+    "Espécies aceitas na matriz final",
+    
+    "Inventários com riqueza calculada"
+  ),
+  
+  quantidade = c(
+    
+    length(
+      inventarios_matriz
+    ),
+    
+    length(
+      inventarios_brasil
+    ),
+    
+    length(
+      inventarios_encontrados
+    ),
+    
+    length(
+      inventarios_nao_encontrados
+    ),
+    
+    nrow(
+      nomes_sem_ocorrencia_brasil
+    ),
+    
+    nrow(
+      sem_tabela_botanica
+    ),
+    
+    nrow(
+      matriz_completas
+    ),
+    
+    nrow(
+      identificacoes_excluidas
+    ),
+    
+    nrow(
+      completas_sem_nome_aceito
+    ),
+    
+    nrow(
+      nomes_consolidados
+    ),
+    
+    nrow(
+      especies_sem_ocorrencia
+    ),
+    
+    nrow(
+      matriz_final
+    ),
+    
+    nrow(
+      riqueza
+    )
+  ),
+  
+  stringsAsFactors = FALSE
+)
+
+cat(
+  "\n============================================\n",
+  "RESUMO GERAL\n",
+  "============================================\n",
+  sep = ""
+)
+
+print(
+  resumo
+)
+
+
+# ============================================================
+# 38. SALVAR MATRIZ FINAL
+# ============================================================
+
+write.csv2(
+  matriz_final,
+  arquivo_saida,
+  row.names = FALSE,
+  fileEncoding = "latin1"
+)
+
+
+# ============================================================
+# 39. SALVAR RELATÓRIO
+# ============================================================
+
+write.xlsx(
+  
+  list(
+    
+    resumo =
+      resumo,
+    
+    riqueza =
+      riqueza,
+    
+    referencia_com_riqueza =
+      referencia_com_riqueza,
+    
+    resumo_identificacao =
+      resumo_identificacao,
+    
+    identificacoes_excluidas =
+      identificacoes_excluidas,
+    
+    completas_sem_nome_aceito =
+      completas_sem_nome_aceito,
+    
+    nomes_consolidados =
+      nomes_consolidados,
+    
+    nomes_sem_ocorrencia_brasil =
+      nomes_sem_ocorrencia_brasil,
+    
+    especies_sem_ocorrencia =
+      especies_sem_ocorrencia,
+    
+    duplicacoes_taxonomia =
+      duplicacoes_taxonomia,
+    
+    duplicacoes_finais =
+      duplicacoes_finais,
+    
+    inventarios_nao_encontrados =
+      data.frame(
+        ponto =
+          inventarios_nao_encontrados
+      ),
+    
+    inventarios_fora_referencia =
+      data.frame(
+        ponto =
+          inventarios_fora_referencia
+      )
+  ),
+  
+  arquivo_relatorio,
+  
+  overwrite = TRUE
+)
+
+
+# ============================================================
+# 40. FINAL
+# ============================================================
+
+cat(
+  "\n============================================\n"
+)
+
+cat(
+  "ETAPA CONCLUÍDA\n"
+)
+
+cat(
+  "============================================\n"
+)
+
+cat(
+  "\nMatriz final:\n",
+  arquivo_saida,
+  "\n"
+)
+
+cat(
+  "\nRelatório:\n",
+  arquivo_relatorio,
+  "\n"
+)
+
+cat(
+  "\nEspécies aceitas na matriz final:",
+  nrow(matriz_final),
+  "\n"
+)
+
+cat(
+  "Inventários brasileiros:",
+  length(inventarios_encontrados),
+  "\n"
+)
+
+cat(
+  "============================================\n"
+)
