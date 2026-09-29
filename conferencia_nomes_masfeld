@@ -1,0 +1,2576 @@
+# ============================================================
+# CONFERÊNCIA BOTÂNICA UNIVERSAL
+# REFLORA + POWO / WCVP
+#
+# ENTRADA:
+#   qualquer .xlsx contendo uma coluna chamada "especie"
+#
+# ARQUIVO ATUAL:
+#   ssp_manejo/ssp_gustavo.xlsx
+#
+# PRINCÍPIOS:
+#
+# 1. "especie" nunca é alterada
+# 2. cria "nome_corrigido"
+# 3. infraespecíficos são registrados, mas a análise é feita
+#    no nível de espécie
+# 4. SOMENTE × representa híbrido
+# 5. letra x normal NÃO representa híbrido
+# 6. Phaseolus ×dumosus e Phaseolus × dumosus são equivalentes
+#    somente na chave de comparação
+# 7. busca exata no REFLORA
+# 8. se não encontrar -> POWO/WCVP
+# 9. sinônimos -> recuperar nome aceito
+# 10. todas as colunas originais são preservadas
+#
+# SEM FUZZY MATCHING
+# ============================================================
+
+
+# ============================================================
+# 0. PACOTES
+# ============================================================
+
+pacotes <- c(
+  "readxl",
+  "dplyr",
+  "stringr",
+  "jsonlite",
+  "openxlsx"
+)
+
+pacotes_faltantes <- pacotes[
+  !pacotes %in% rownames(installed.packages())
+]
+
+if (length(pacotes_faltantes) > 0) {
+  install.packages(pacotes_faltantes)
+}
+
+library(readxl)
+library(dplyr)
+library(stringr)
+library(jsonlite)
+library(openxlsx)
+
+
+# ============================================================
+# 1. CAMINHOS
+# ============================================================
+
+# ============================================================
+# 1. CAMINHOS
+# ============================================================
+
+pasta_caapora <-
+  "C:/Users/giuli/OneDrive/Documentos/Caapora"
+
+
+# ------------------------------------------------------------
+# PASTA DE TRABALHO
+# ------------------------------------------------------------
+
+pasta_trabalho <- file.path(
+  pasta_caapora,
+  "ssp_manejo"
+)
+
+
+# ------------------------------------------------------------
+# ARQUIVO DE ENTRADA
+# ------------------------------------------------------------
+
+arquivo_especies <- file.path(
+  pasta_trabalho,
+  "ssp_mansfeld.xlsx"
+)
+
+
+# ------------------------------------------------------------
+# REFLORA
+# ------------------------------------------------------------
+
+pasta_reflora <- file.path(
+  pasta_caapora,
+  "nomes_botanicos",
+  "dwca-lista_especies_flora_brasil-v393.428"
+)
+
+arquivo_taxon <- file.path(
+  pasta_reflora,
+  "taxon.txt"
+)
+
+arquivo_speciesprofile <- file.path(
+  pasta_reflora,
+  "speciesprofile.txt"
+)
+
+arquivo_distribution <- file.path(
+  pasta_reflora,
+  "distribution.txt"
+)
+
+
+# ------------------------------------------------------------
+# POWO / WCVP
+# ------------------------------------------------------------
+
+pasta_powo <- file.path(
+  pasta_caapora,
+  "nomes_botanicos",
+  "wcvp_dwca"
+)
+
+arquivo_wcvp_taxon <- file.path(
+  pasta_powo,
+  "wcvp_taxon.csv"
+)
+
+
+# ------------------------------------------------------------
+# ARQUIVO DE SAÍDA
+# ------------------------------------------------------------
+
+arquivo_saida <- file.path(
+  pasta_trabalho,
+  "ssp_mansfeld_conferencia_botanica.xlsx"
+)
+
+# ============================================================
+# 2. CONFERIR ARQUIVOS
+# ============================================================
+
+arquivos_necessarios <- c(
+  arquivo_especies,
+  arquivo_taxon,
+  arquivo_speciesprofile,
+  arquivo_distribution,
+  arquivo_wcvp_taxon
+)
+
+if (any(!file.exists(arquivos_necessarios))) {
+  
+  stop(
+    paste(
+      "Arquivos não encontrados:",
+      paste(
+        arquivos_necessarios[
+          !file.exists(arquivos_necessarios)
+        ],
+        collapse = "\n"
+      ),
+      sep = "\n"
+    )
+  )
+}
+
+
+# ============================================================
+# 3. FUNÇÕES AUXILIARES
+# ============================================================
+
+
+# ============================================================
+# 3.1 NORMALIZAR NOME PARA COMPARAÇÃO
+#
+# IMPORTANTE:
+#
+# NÃO usamos iconv ASCII//TRANSLIT.
+#
+# Isso evita destruir o símbolo ×.
+#
+# Também fazemos:
+#
+# Phaseolus × dumosus
+# Phaseolus ×dumosus
+#
+# virarem:
+#
+# phaseolus ×dumosus
+#
+# SOMENTE NA CHAVE DE COMPARAÇÃO.
+# ============================================================
+
+normalizar_nome <- function(x) {
+  
+  x <- as.character(x)
+  
+  x <- gsub(
+    "_",
+    " ",
+    x,
+    fixed = TRUE
+  )
+  
+  x <- gsub(
+    "\u00A0",
+    " ",
+    x,
+    fixed = TRUE
+  )
+  
+  # ------------------------------------------
+  # Espaço depois de × é ignorado
+  # ------------------------------------------
+  
+  x <- gsub(
+    "×[[:space:]]+",
+    "×",
+    x
+  )
+  
+  # ------------------------------------------
+  # espaços repetidos
+  # ------------------------------------------
+  
+  x <- gsub(
+    "[[:space:]]+",
+    " ",
+    x
+  )
+  
+  x <- trimws(x)
+  
+  x <- tolower(x)
+  
+  x[
+    is.na(x) |
+      x == ""
+  ] <- NA_character_
+  
+  x
+}
+
+
+# ============================================================
+# 3.2 EXTRAIR JSON REFLORA
+# ============================================================
+
+extrair_json <- function(x, campo) {
+  
+  if (
+    is.na(x) ||
+      trimws(x) == ""
+  ) {
+    return(NA_character_)
+  }
+  
+  obj <- tryCatch(
+    jsonlite::fromJSON(x),
+    error = function(e) NULL
+  )
+  
+  if (
+    is.null(obj) ||
+      is.null(obj[[campo]])
+  ) {
+    return(NA_character_)
+  }
+  
+  valores <- unique(
+    as.character(
+      obj[[campo]]
+    )
+  )
+  
+  valores <- valores[
+    !is.na(valores) &
+      trimws(valores) != ""
+  ]
+  
+  if (length(valores) == 0) {
+    return(NA_character_)
+  }
+  
+  paste(
+    valores,
+    collapse = "; "
+  )
+}
+
+
+# ============================================================
+# 3.3 JUNTAR VALORES ÚNICOS
+# ============================================================
+
+juntar_unicos <- function(x) {
+  
+  x <- as.character(x)
+  
+  x <- x[
+    !is.na(x) &
+      trimws(x) != ""
+  ]
+  
+  x <- unique(x)
+  
+  if (length(x) == 0) {
+    return(NA_character_)
+  }
+  
+  paste(
+    sort(x),
+    collapse = "; "
+  )
+}
+
+
+# ============================================================
+# 3.4 PREPARAR NOME BOTÂNICO
+#
+# Exemplos:
+#
+# arracacia_xanthorrhiza
+# ->
+# Arracacia xanthorrhiza
+#
+# campomanesia_xanthocarpa
+# ->
+# Campomanesia xanthocarpa
+#
+# phaseolus_×dumosus
+# ->
+# Phaseolus ×dumosus
+#
+# phaseolus_×_dumosus
+# ->
+# Phaseolus ×dumosus
+#
+# euterpe_edulis_var_edulis
+# ->
+# Euterpe edulis
+#
+# IMPORTANTE:
+# a letra x NÃO é convertida em ×.
+# ============================================================
+
+preparar_nome_botanico <- function(x) {
+  
+  if (
+    is.na(x) ||
+      trimws(x) == ""
+  ) {
+    return(NA_character_)
+  }
+  
+  x <- as.character(x)
+  
+  x <- trimws(x)
+  
+  
+  # ------------------------------------------
+  # underline -> espaço
+  # ------------------------------------------
+  
+  x <- gsub(
+    "_",
+    " ",
+    x,
+    fixed = TRUE
+  )
+  
+  x <- stringr::str_squish(x)
+  
+  
+  # ------------------------------------------
+  # HÍBRIDO
+  #
+  # Somente se já existir ×.
+  #
+  # × dumosus -> ×dumosus
+  #
+  # NÃO mexe em:
+  #
+  # xanthorrhiza
+  # xanthocarpa
+  # xerophytica
+  # etc.
+  # ------------------------------------------
+  
+  x <- gsub(
+    "×[[:space:]]+",
+    "×",
+    x
+  )
+  
+  
+  # ------------------------------------------
+  # REMOVER PARTE INFRAESPECÍFICA
+  #
+  # var.
+  # var
+  # subsp.
+  # subsp
+  # ssp.
+  # ssp
+  # subvar.
+  # f.
+  # forma
+  #
+  # A informação será guardada separadamente.
+  # ------------------------------------------
+  
+  x <- sub(
+    "\\s+(subsp\\.?|ssp\\.?|var\\.?|subvar\\.?|f\\.?|forma)\\s+.*$",
+    "",
+    x,
+    ignore.case = TRUE
+  )
+  
+  x <- stringr::str_squish(x)
+  
+  
+  # ------------------------------------------
+  # Primeira letra do gênero maiúscula
+  # ------------------------------------------
+  
+  if (!is.na(x) && nchar(x) > 0) {
+    
+    primeira <- toupper(
+      substr(
+        x,
+        1,
+        1
+      )
+    )
+    
+    restante <- substr(
+      x,
+      2,
+      nchar(x)
+    )
+    
+    x <- paste0(
+      primeira,
+      restante
+    )
+  }
+  
+  
+  if (x == "") {
+    return(NA_character_)
+  }
+  
+  x
+}
+
+
+# ============================================================
+# 3.5 EXTRAIR INFRAESPECÍFICO
+# ============================================================
+
+extrair_infraespecifico <- function(x) {
+  
+  if (
+    is.na(x) ||
+      trimws(x) == ""
+  ) {
+    return(NA_character_)
+  }
+  
+  x <- as.character(x)
+  
+  x <- gsub(
+    "_",
+    " ",
+    x,
+    fixed = TRUE
+  )
+  
+  x <- stringr::str_squish(x)
+  
+  
+  encontrado <- stringr::str_extract(
+    x,
+    regex(
+      "\\b(subsp\\.?|ssp\\.?|var\\.?|subvar\\.?|f\\.?|forma)\\s+.*$",
+      ignore_case = TRUE
+    )
+  )
+  
+  
+  if (
+    is.na(encontrado) ||
+      trimws(encontrado) == ""
+  ) {
+    return(NA_character_)
+  }
+  
+  
+  trimws(
+    encontrado
+  )
+}
+
+
+# ============================================================
+# 3.6 IDENTIFICAR HÍBRIDO
+#
+# SOMENTE ×
+#
+# Arracacia xanthorrhiza   = FALSE
+# Campomanesia xanthocarpa = FALSE
+# Phaseolus ×dumosus       = TRUE
+# Phaseolus × dumosus      = TRUE
+# ============================================================
+
+identificar_hibrido <- function(x) {
+  
+  if (
+    is.na(x) ||
+      trimws(x) == ""
+  ) {
+    return(FALSE)
+  }
+  
+  grepl(
+    "×",
+    as.character(x),
+    fixed = TRUE
+  )
+}
+
+
+# ============================================================
+# 3.7 EXTRAIR LIFEFORM POWO
+# ============================================================
+
+extrair_lifeform_powo <- function(x) {
+  
+  x <- as.character(x)
+  
+  x_limpo <- gsub(
+    '\\\\"',
+    '"',
+    x
+  )
+  
+  x_limpo <- gsub(
+    '"',
+    '',
+    x_limpo,
+    fixed = TRUE
+  )
+  
+  resultado <- stringr::str_match(
+    x_limpo,
+    "lifeform\\s*:\\s*([^,}]*)"
+  )[, 2]
+  
+  resultado <- trimws(
+    resultado
+  )
+  
+  resultado[
+    is.na(resultado) |
+      resultado == ""
+  ] <- NA_character_
+  
+  resultado
+}
+
+
+# ============================================================
+# 4. LER TABELA DE ESPÉCIES
+# ============================================================
+
+cat("\n============================================\n")
+cat("LENDO TABELA DE ESPÉCIES\n")
+cat("============================================\n\n")
+
+
+especies <- read_excel(
+  arquivo_especies,
+  sheet = 1
+)
+
+especies <- as.data.frame(
+  especies,
+  stringsAsFactors = FALSE,
+  check.names = FALSE
+)
+
+names(especies) <-
+  trimws(
+    names(especies)
+  )
+
+
+# ============================================================
+# 5. CONFERIR COLUNA OBRIGATÓRIA
+# ============================================================
+
+if (!"especie" %in% names(especies)) {
+  
+  stop(
+    'A tabela precisa possuir uma coluna chamada "especie".'
+  )
+}
+
+
+# ============================================================
+# 6. PREPARAR NOMES DA TABELA
+# ============================================================
+
+especies <- especies %>%
+  
+  mutate(
+    
+    id_registro =
+      row_number(),
+    
+    especie =
+      trimws(
+        as.character(
+          especie
+        )
+      ),
+    
+    especie =
+      ifelse(
+        is.na(especie) |
+          especie == "",
+        NA_character_,
+        especie
+      ),
+    
+    
+    # ----------------------------------------
+    # Guardar infraespecífico original
+    # ----------------------------------------
+    
+    infraespecifico_original =
+      vapply(
+        especie,
+        extrair_infraespecifico,
+        FUN.VALUE = character(1)
+      ),
+    
+    
+    # ----------------------------------------
+    # Híbrido: SOMENTE ×
+    # ----------------------------------------
+    
+    hibrido =
+      vapply(
+        especie,
+        identificar_hibrido,
+        FUN.VALUE = logical(1)
+      ),
+    
+    
+    # ----------------------------------------
+    # Nome preparado
+    # ----------------------------------------
+    
+    nome_corrigido =
+      vapply(
+        especie,
+        preparar_nome_botanico,
+        FUN.VALUE = character(1)
+      ),
+    
+    
+    # ----------------------------------------
+    # Chave usada nas bases
+    # ----------------------------------------
+    
+    chave_busca =
+      normalizar_nome(
+        nome_corrigido
+      )
+  )
+
+
+# ============================================================
+# 7. DIAGNÓSTICO INICIAL
+# ============================================================
+
+cat(
+  "Total de registros:",
+  nrow(especies),
+  "\n"
+)
+
+cat(
+  "Nomes únicos:",
+  n_distinct(
+    especies$chave_busca,
+    na.rm = TRUE
+  ),
+  "\n"
+)
+
+cat(
+  "Infraespecíficos:",
+  sum(
+    !is.na(
+      especies$infraespecifico_original
+    )
+  ),
+  "\n"
+)
+
+cat(
+  "Híbridos:",
+  sum(
+    especies$hibrido,
+    na.rm = TRUE
+  ),
+  "\n"
+)
+
+
+# ============================================================
+# TESTE DOS HÍBRIDOS
+# ============================================================
+
+cat("\nHÍBRIDOS IDENTIFICADOS:\n")
+
+print(
+  especies %>%
+    
+    filter(
+      hibrido
+    ) %>%
+    
+    select(
+      especie,
+      nome_corrigido,
+      chave_busca
+    )
+)
+
+
+# ============================================================
+# PARTE I
+# REFLORA
+# ============================================================
+
+
+# ============================================================
+# 8. LER TAXON REFLORA
+# ============================================================
+
+cat("\n============================================\n")
+cat("LENDO REFLORA\n")
+cat("============================================\n\n")
+
+
+taxon <- read.delim(
+  arquivo_taxon,
+  header = TRUE,
+  sep = "\t",
+  quote = "",
+  comment.char = "",
+  stringsAsFactors = FALSE,
+  check.names = FALSE,
+  fileEncoding = "UTF-8",
+  na.strings = c("", "NA")
+)
+
+
+# ============================================================
+# 9. MANTER PLANTAE
+# ============================================================
+
+taxon <- taxon[
+  !is.na(taxon$kingdom) &
+    tolower(taxon$kingdom) ==
+    "plantae",
+  ,
+  drop = FALSE
+]
+
+
+# ============================================================
+# 10. PADRONIZAR IDs
+# ============================================================
+
+taxon$id <-
+  as.character(
+    taxon$id
+  )
+
+taxon$taxonID <-
+  as.character(
+    taxon$taxonID
+  )
+
+taxon$acceptedNameUsageID <-
+  as.character(
+    taxon$acceptedNameUsageID
+  )
+
+
+# ============================================================
+# 11. STATUS TAXONÔMICO REFLORA
+# ============================================================
+
+taxon$status_padronizado <-
+  toupper(
+    trimws(
+      as.character(
+        taxon$taxonomicStatus
+      )
+    )
+  )
+
+
+# ============================================================
+# 12. MONTAR NOME SEM AUTORIA
+#
+# Aqui usamos:
+#
+# genus + specificEpithet + infraspecificEpithet
+#
+# Se specificEpithet tiver:
+#
+# × dumosus
+# ×dumosus
+#
+# normalizar_nome() tornará equivalentes.
+# ============================================================
+
+montar_nome_sem_autoria <- function(
+    genus,
+  especie,
+  infra
+) {
+  
+  partes <- c(
+    genus,
+    especie,
+    infra
+  )
+  
+  partes <- partes[
+    !is.na(partes) &
+      trimws(partes) != ""
+  ]
+  
+  if (length(partes) == 0) {
+    return(NA_character_)
+  }
+  
+  paste(
+    partes,
+    collapse = " "
+  )
+}
+
+
+taxon$nome_sem_autoria <-
+  mapply(
+    montar_nome_sem_autoria,
+    taxon$genus,
+    taxon$specificEpithet,
+    taxon$infraspecificEpithet,
+    USE.NAMES = FALSE
+  )
+
+
+taxon$nome_busca <-
+  normalizar_nome(
+    taxon$nome_sem_autoria
+  )
+
+
+# ============================================================
+# 13. IDENTIFICAR TÁXON ACEITO REFLORA
+# ============================================================
+
+taxon$taxonID_aceito <-
+  ifelse(
+    
+    !is.na(
+      taxon$acceptedNameUsageID
+    ) &
+      trimws(
+        taxon$acceptedNameUsageID
+      ) != "",
+    
+    taxon$acceptedNameUsageID,
+    
+    taxon$taxonID
+  )
+
+
+indice_aceito <- match(
+  taxon$taxonID_aceito,
+  taxon$taxonID
+)
+
+
+taxon$nome_aceito_reflora <-
+  ifelse(
+    
+    !is.na(
+      indice_aceito
+    ),
+    
+    taxon$scientificName[
+      indice_aceito
+    ],
+    
+    ifelse(
+      
+      !is.na(
+        taxon$acceptedNameUsage
+      ) &
+        trimws(
+          taxon$acceptedNameUsage
+        ) != "",
+      
+      taxon$acceptedNameUsage,
+      
+      taxon$scientificName
+    )
+  )
+
+
+taxon$nome_aceito_sem_autoria <-
+  ifelse(
+    
+    !is.na(
+      indice_aceito
+    ),
+    
+    taxon$nome_sem_autoria[
+      indice_aceito
+    ],
+    
+    taxon$acceptedNameUsage
+  )
+
+
+taxon$familia_aceita_reflora <-
+  ifelse(
+    
+    !is.na(
+      indice_aceito
+    ),
+    
+    taxon$family[
+      indice_aceito
+    ],
+    
+    taxon$family
+  )
+
+
+taxon$genero_aceito_reflora <-
+  ifelse(
+    
+    !is.na(
+      indice_aceito
+    ),
+    
+    taxon$genus[
+      indice_aceito
+    ],
+    
+    taxon$genus
+  )
+
+
+# ============================================================
+# 14. STATUS NOMENCLATURAL DO ACEITO
+# ============================================================
+
+taxon$status_nomenclatural_aceito_reflora <-
+  ifelse(
+    
+    !is.na(
+      indice_aceito
+    ),
+    
+    taxon$nomenclaturalStatus[
+      indice_aceito
+    ],
+    
+    taxon$nomenclaturalStatus
+  )
+
+
+# ============================================================
+# 15. RELAÇÃO COM NOME ACEITO
+# ============================================================
+
+taxon$chave_nome_aceito <-
+  normalizar_nome(
+    taxon$nome_aceito_sem_autoria
+  )
+
+
+taxon$relacao_nome_aceito <-
+  case_when(
+    
+    taxon$status_padronizado ==
+      "NOME_ACEITO" ~
+      "nome_aceito",
+    
+    taxon$status_padronizado ==
+      "SINONIMO" &
+      taxon$nome_busca ==
+      taxon$chave_nome_aceito ~
+      "sinonimo_nome_aceito_igual",
+    
+    taxon$status_padronizado ==
+      "SINONIMO" ~
+      "sinonimo_nome_aceito_diferente",
+    
+    TRUE ~
+      NA_character_
+  )
+
+
+# ============================================================
+# 16. SPECIESPROFILE / LIFEFORM
+# ============================================================
+
+cat(
+  "Lendo speciesprofile.txt...\n"
+)
+
+
+speciesprofile <- read.delim(
+  arquivo_speciesprofile,
+  header = TRUE,
+  sep = "\t",
+  quote = "",
+  comment.char = "",
+  stringsAsFactors = FALSE,
+  check.names = FALSE,
+  fileEncoding = "UTF-8",
+  na.strings = c("", "NA")
+)
+
+
+speciesprofile$id <-
+  as.character(
+    speciesprofile$id
+  )
+
+
+speciesprofile$lifeForm_extraido <-
+  vapply(
+    speciesprofile$lifeForm,
+    extrair_json,
+    campo = "lifeForm",
+    FUN.VALUE = character(1)
+  )
+
+
+id_aceito_reflora <-
+  ifelse(
+    
+    !is.na(
+      indice_aceito
+    ),
+    
+    taxon$id[
+      indice_aceito
+    ],
+    
+    taxon$id
+  )
+
+
+indice_perfil_aceito <- match(
+  id_aceito_reflora,
+  speciesprofile$id
+)
+
+
+taxon$lifeForm_reflora <-
+  speciesprofile$lifeForm_extraido[
+    indice_perfil_aceito
+  ]
+
+
+# ============================================================
+# 17. DISTRIBUIÇÃO REFLORA
+# ============================================================
+
+cat(
+  "Lendo distribution.txt...\n"
+)
+
+
+distribution <- read.delim(
+  arquivo_distribution,
+  header = TRUE,
+  sep = "\t",
+  quote = "",
+  comment.char = "",
+  stringsAsFactors = FALSE,
+  check.names = FALSE,
+  fileEncoding = "UTF-8",
+  na.strings = c("", "NA")
+)
+
+
+distribution$id <-
+  as.character(
+    distribution$id
+  )
+
+
+distribution$establishmentMeans <-
+  toupper(
+    trimws(
+      as.character(
+        distribution$establishmentMeans
+      )
+    )
+  )
+
+
+distribution$endemismo <-
+  vapply(
+    distribution$occurrenceRemarks,
+    extrair_json,
+    campo = "endemism",
+    FUN.VALUE = character(1)
+  )
+
+
+distribution$dominio_fitogeografico <-
+  vapply(
+    distribution$occurrenceRemarks,
+    extrair_json,
+    campo = "phytogeographicDomain",
+    FUN.VALUE = character(1)
+  )
+
+
+distribuicao_resumida <-
+  distribution %>%
+  
+  group_by(
+    id
+  ) %>%
+  
+  summarise(
+    
+    establishmentMeans_reflora =
+      juntar_unicos(
+        establishmentMeans
+      ),
+    
+    nativa_reflora =
+      any(
+        establishmentMeans ==
+          "NATIVA",
+        na.rm = TRUE
+      ),
+    
+    naturalizada_reflora =
+      any(
+        establishmentMeans ==
+          "NATURALIZADA",
+        na.rm = TRUE
+      ),
+    
+    cultivada_reflora =
+      any(
+        establishmentMeans ==
+          "CULTIVADA",
+        na.rm = TRUE
+      ),
+    
+    endemismo_reflora =
+      juntar_unicos(
+        endemismo
+      ),
+    
+    dominio_fitogeografico_reflora =
+      juntar_unicos(
+        dominio_fitogeografico
+      ),
+    
+    estados_reflora =
+      juntar_unicos(
+        locationID
+      ),
+    
+    .groups =
+      "drop"
+  )
+
+
+taxon$id_aceito_reflora <-
+  as.character(
+    id_aceito_reflora
+  )
+
+
+taxon <- taxon %>%
+  
+  left_join(
+    
+    distribuicao_resumida %>%
+      
+      rename(
+        id_aceito_reflora =
+          id
+      ),
+    
+    by =
+      "id_aceito_reflora"
+  )
+
+
+# ============================================================
+# 18. PRIORIDADE REFLORA
+# ============================================================
+
+taxon$prioridade_reflora <-
+  case_when(
+    
+    taxon$status_padronizado ==
+      "NOME_ACEITO" ~
+      1L,
+    
+    taxon$status_padronizado ==
+      "SINONIMO" ~
+      2L,
+    
+    TRUE ~
+      3L
+  )
+
+
+# ============================================================
+# 19. EVITAR INFRAESPECÍFICOS NA BUSCA PRINCIPAL
+#
+# Como nossa análise é no nível de espécie,
+# damos prioridade aos registros sem
+# infraspecificEpithet.
+# ============================================================
+
+taxon$prioridade_nivel <-
+  ifelse(
+    
+    is.na(
+      taxon$infraspecificEpithet
+    ) |
+      trimws(
+        taxon$infraspecificEpithet
+      ) == "",
+    
+    1L,
+    
+    2L
+  )
+
+
+taxon_ordenado <- taxon[
+  order(
+    taxon$nome_busca,
+    taxon$prioridade_nivel,
+    taxon$prioridade_reflora
+  ),
+  ,
+  drop = FALSE
+]
+
+
+# ============================================================
+# 20. LOOKUP REFLORA
+# ============================================================
+
+lookup_reflora <- taxon_ordenado[
+  !is.na(
+    taxon_ordenado$nome_busca
+  ) &
+    !duplicated(
+      taxon_ordenado$nome_busca
+    ),
+  ,
+  drop = FALSE
+]
+
+
+# ============================================================
+# 21. BUSCAR NO REFLORA
+# ============================================================
+
+posicao_reflora <- match(
+  especies$chave_busca,
+  lookup_reflora$nome_busca
+)
+
+
+especies$conferencia_reflora <-
+  !is.na(
+    especies$chave_busca
+  ) &
+  !is.na(
+    posicao_reflora
+  )
+
+
+# ============================================================
+# 22. FUNÇÃO PARA EXTRAIR REFLORA
+# ============================================================
+
+extrair_reflora <- function(coluna) {
+  
+  resultado <-
+    rep(
+      NA,
+      nrow(especies)
+    )
+  
+  indices <- which(
+    especies$conferencia_reflora
+  )
+  
+  resultado[
+    indices
+  ] <-
+    coluna[
+      posicao_reflora[
+        indices
+      ]
+    ]
+  
+  resultado
+}
+
+
+# ============================================================
+# 23. INFORMAÇÕES REFLORA
+# ============================================================
+
+especies$taxonID_reflora <-
+  extrair_reflora(
+    lookup_reflora$taxonID
+  )
+
+
+especies$taxonID_aceito_reflora <-
+  extrair_reflora(
+    lookup_reflora$taxonID_aceito
+  )
+
+
+especies$nome_encontrado_reflora <-
+  extrair_reflora(
+    lookup_reflora$scientificName
+  )
+
+
+especies$nome_aceito_reflora <-
+  extrair_reflora(
+    lookup_reflora$nome_aceito_reflora
+  )
+
+
+especies$nome_aceito_sem_autoria_reflora <-
+  extrair_reflora(
+    lookup_reflora$nome_aceito_sem_autoria
+  )
+
+
+especies$familia_reflora <-
+  extrair_reflora(
+    lookup_reflora$familia_aceita_reflora
+  )
+
+
+especies$genero_reflora <-
+  extrair_reflora(
+    lookup_reflora$genero_aceito_reflora
+  )
+
+
+especies$nivel_taxonomico_reflora <-
+  extrair_reflora(
+    lookup_reflora$taxonRank
+  )
+
+
+especies$autoria_reflora <-
+  extrair_reflora(
+    lookup_reflora$scientificNameAuthorship
+  )
+
+
+especies$status_taxonomico_reflora <-
+  extrair_reflora(
+    lookup_reflora$status_padronizado
+  )
+
+
+especies$status_nomenclatural_reflora <-
+  extrair_reflora(
+    lookup_reflora$status_nomenclatural_aceito_reflora
+  )
+
+
+especies$relacao_nome_aceito_reflora <-
+  extrair_reflora(
+    lookup_reflora$relacao_nome_aceito
+  )
+
+
+especies$lifeForm_reflora <-
+  extrair_reflora(
+    lookup_reflora$lifeForm_reflora
+  )
+
+
+especies$establishmentMeans_reflora <-
+  extrair_reflora(
+    lookup_reflora$establishmentMeans_reflora
+  )
+
+
+especies$nativa_reflora <-
+  extrair_reflora(
+    lookup_reflora$nativa_reflora
+  )
+
+
+especies$naturalizada_reflora <-
+  extrair_reflora(
+    lookup_reflora$naturalizada_reflora
+  )
+
+
+especies$cultivada_reflora <-
+  extrair_reflora(
+    lookup_reflora$cultivada_reflora
+  )
+
+
+especies$endemismo_reflora <-
+  extrair_reflora(
+    lookup_reflora$endemismo_reflora
+  )
+
+
+especies$dominio_fitogeografico_reflora <-
+  extrair_reflora(
+    lookup_reflora$dominio_fitogeografico_reflora
+  )
+
+
+especies$estados_reflora <-
+  extrair_reflora(
+    lookup_reflora$estados_reflora
+  )
+
+
+# ============================================================
+# PARTE II
+# POWO / WCVP
+# ============================================================
+
+
+# ============================================================
+# 24. LER WCVP
+# ============================================================
+
+cat("\n============================================\n")
+cat("LENDO POWO / WCVP\n")
+cat("============================================\n\n")
+
+
+wcvp <- read.delim(
+  arquivo_wcvp_taxon,
+  sep = "|",
+  header = TRUE,
+  quote = "",
+  stringsAsFactors = FALSE,
+  check.names = FALSE,
+  fileEncoding = "UTF-8",
+  fill = TRUE
+)
+
+
+# ============================================================
+# 25. NOMES DAS COLUNAS EM MINÚSCULO
+# ============================================================
+
+names(wcvp) <-
+  tolower(
+    trimws(
+      names(wcvp)
+    )
+  )
+
+
+# ============================================================
+# 26. IDENTIFICAR COLUNA DO NOME
+# ============================================================
+
+if (
+  "scientfiicname" %in%
+    names(wcvp)
+) {
+  
+  coluna_nome_wcvp <-
+    "scientfiicname"
+  
+} else if (
+  "scientificname" %in%
+    names(wcvp)
+) {
+  
+  coluna_nome_wcvp <-
+    "scientificname"
+  
+} else {
+  
+  stop(
+    "Não encontrei scientificname/scientfiicname no WCVP."
+  )
+}
+
+
+# ============================================================
+# 27. IDENTIFICAR COLUNA DA AUTORIA
+# ============================================================
+
+if (
+  "scientfiicnameauthorship" %in%
+    names(wcvp)
+) {
+  
+  coluna_autoria_wcvp <-
+    "scientfiicnameauthorship"
+  
+} else if (
+  "scientificnameauthorship" %in%
+    names(wcvp)
+) {
+  
+  coluna_autoria_wcvp <-
+    "scientificnameauthorship"
+  
+} else {
+  
+  stop(
+    "Não encontrei a coluna de autoria no WCVP."
+  )
+}
+
+
+# ============================================================
+# 28. PREPARAR WCVP
+# ============================================================
+
+# ============================================================
+# 28. PREPARAR WCVP
+# ============================================================
+
+# Criar coluna com nome científico
+wcvp$nome_cientifico_wcvp <-
+  wcvp[[coluna_nome_wcvp]]
+
+
+# Criar coluna com autoria
+wcvp$autoria_wcvp <-
+  wcvp[[coluna_autoria_wcvp]]
+
+
+# Conferência rápida
+cat(
+  "Coluna de nome utilizada:",
+  coluna_nome_wcvp,
+  "\n"
+)
+
+cat(
+  "Coluna de autoria utilizada:",
+  coluna_autoria_wcvp,
+  "\n"
+)
+
+cat(
+  "Registros no WCVP:",
+  nrow(wcvp),
+  "\n"
+)
+
+
+# Preparar campos
+wcvp <- wcvp %>%
+  
+  mutate(
+    
+    taxonid =
+      as.character(taxonid),
+    
+    acceptednameusageid =
+      as.character(acceptednameusageid),
+    
+    # Chave padronizada para comparação
+    #
+    # Phaseolus × dumosus
+    # e
+    # Phaseolus ×dumosus
+    #
+    # resultarão na mesma chave:
+    # phaseolus ×dumosus
+    
+    chave_powo =
+      normalizar_nome(
+        nome_cientifico_wcvp
+      ),
+    
+    lifeform_powo =
+      extrair_lifeform_powo(
+        dynamicproperties
+      )
+  )
+
+
+# ============================================================
+# TESTE
+# ============================================================
+
+cat("\nExemplo dos nomes preparados no WCVP:\n")
+
+print(
+  wcvp %>%
+    select(
+      nome_cientifico_wcvp,
+      chave_powo,
+      taxonomicstatus
+    ) %>%
+    head(10)
+)
+
+
+# ============================================================
+# TESTE ESPECÍFICO DO PHASEOLUS
+# ============================================================
+
+cat("\nProcurando Phaseolus dumosus / híbrido no WCVP:\n")
+
+teste_phaseolus <- wcvp %>%
+  
+  filter(
+    grepl(
+      "phaseolus.*dumosus",
+      chave_powo,
+      ignore.case = TRUE
+    )
+  ) %>%
+  
+  select(
+    nome_cientifico_wcvp,
+    chave_powo,
+    autoria_wcvp,
+    taxonomicstatus,
+    taxonid,
+    acceptednameusageid
+  )
+
+
+print(
+  teste_phaseolus
+)
+
+# ============================================================
+# 29. TÁXONS ACEITOS POWO
+# ============================================================
+
+wcvp_aceitos <- wcvp %>%
+  
+  filter(
+    taxonomicstatus %in%
+      c(
+        "Accepted",
+        "Provisionally Accepted"
+      )
+  ) %>%
+  
+  transmute(
+    
+    taxonid_aceito_powo =
+      taxonid,
+    
+    nome_aceito_powo =
+      nome_cientifico_wcvp,
+    
+    autoria_aceita_powo =
+      autoria_wcvp,
+    
+    familia_aceita_powo =
+      family,
+    
+    genero_aceito_powo =
+      genus,
+    
+    rank_aceito_powo =
+      taxonrank,
+    
+    status_nome_aceito_powo =
+      taxonomicstatus,
+    
+    lifeform_aceito_powo =
+      lifeform_powo
+  )
+
+
+# ============================================================
+# 30. NOMES QUE NÃO FORAM ENCONTRADOS NO REFLORA
+# ============================================================
+
+busca_powo <- especies %>%
+  
+  filter(
+    !conferencia_reflora,
+    !is.na(
+      chave_busca
+    )
+  ) %>%
+  
+  distinct(
+    chave_busca,
+    .keep_all = TRUE
+  ) %>%
+  
+  transmute(
+    chave_powo =
+      chave_busca
+  )
+
+
+cat(
+  "Nomes enviados ao POWO:",
+  nrow(busca_powo),
+  "\n"
+)
+
+
+# ============================================================
+# 31. CORRESPONDÊNCIAS POWO
+# ============================================================
+
+correspondencias_powo <- busca_powo %>%
+  
+  left_join(
+    
+    wcvp %>%
+      
+      select(
+        
+        chave_powo,
+        
+        taxonid_powo =
+          taxonid,
+        
+        nome_encontrado_powo =
+          nome_cientifico_wcvp,
+        
+        autoria_encontrada_powo =
+          autoria_wcvp,
+        
+        status_powo =
+          taxonomicstatus,
+        
+        acceptednameusageid,
+        
+        lifeform_nome_encontrado_powo =
+          lifeform_powo
+      ),
+    
+    by =
+      "chave_powo",
+    
+    relationship =
+      "many-to-many"
+  ) %>%
+  
+  mutate(
+    
+    encontrado_powo =
+      !is.na(
+        taxonid_powo
+      ),
+    
+    prioridade_powo =
+      case_when(
+        
+        status_powo %in%
+          c(
+            "Accepted",
+            "Provisionally Accepted"
+          ) ~
+          1L,
+        
+        status_powo ==
+          "Synonym" ~
+          2L,
+        
+        encontrado_powo ~
+          3L,
+        
+        TRUE ~
+          4L
+      )
+  )
+
+
+# ============================================================
+# 32. MELHOR PRIORIDADE POWO
+# ============================================================
+
+melhor_powo <- correspondencias_powo %>%
+  
+  group_by(
+    chave_powo
+  ) %>%
+  
+  mutate(
+    
+    melhor_prioridade =
+      min(
+        prioridade_powo,
+        na.rm = TRUE
+      )
+  ) %>%
+  
+  filter(
+    prioridade_powo ==
+      melhor_prioridade
+  ) %>%
+  
+  ungroup()
+
+
+# ============================================================
+# 33. IDENTIFICAR EMPATES REAIS
+# ============================================================
+
+empates_powo <- melhor_powo %>%
+  
+  filter(
+    encontrado_powo
+  ) %>%
+  
+  group_by(
+    chave_powo
+  ) %>%
+  
+  summarise(
+    
+    n_taxons =
+      n_distinct(
+        taxonid_powo
+      ),
+    
+    .groups =
+      "drop"
+  ) %>%
+  
+  filter(
+    n_taxons > 1
+  )
+
+
+chaves_empate <-
+  empates_powo$chave_powo
+
+
+# ============================================================
+# 34. RESULTADOS SEM EMPATE
+# ============================================================
+
+selecionados_powo <- melhor_powo %>%
+  
+  filter(
+    !chave_powo %in%
+      chaves_empate
+  ) %>%
+  
+  group_by(
+    chave_powo
+  ) %>%
+  
+  slice(1) %>%
+  
+  ungroup() %>%
+  
+  mutate(
+    
+    decisao_powo =
+      case_when(
+        
+        !encontrado_powo ~
+          "NAO_ENCONTRADO",
+        
+        prioridade_powo ==
+          1 ~
+          "ACCEPTED",
+        
+        prioridade_powo ==
+          2 ~
+          "SYNONYM",
+        
+        TRUE ~
+          "REVISAR_STATUS"
+      ),
+    
+    
+    taxonid_aceito_powo =
+      case_when(
+        
+        decisao_powo ==
+          "ACCEPTED" ~
+          taxonid_powo,
+        
+        decisao_powo ==
+          "SYNONYM" ~
+          acceptednameusageid,
+        
+        TRUE ~
+          NA_character_
+      )
+  )
+
+
+# ============================================================
+# 35. RECUPERAR NOME ACEITO POWO
+# ============================================================
+
+selecionados_powo <- selecionados_powo %>%
+  
+  left_join(
+    
+    wcvp_aceitos,
+    
+    by =
+      "taxonid_aceito_powo"
+  )
+
+
+# ============================================================
+# 36. PREPARAR RESULTADOS POWO
+# ============================================================
+
+dados_powo <- selecionados_powo %>%
+  
+  select(
+    
+    chave_powo,
+    
+    encontrado_powo,
+    
+    decisao_powo,
+    
+    taxonid_powo,
+    
+    nome_encontrado_powo,
+    
+    autoria_encontrada_powo,
+    
+    status_powo,
+    
+    taxonid_aceito_powo,
+    
+    nome_aceito_powo,
+    
+    autoria_aceita_powo,
+    
+    familia_aceita_powo,
+    
+    genero_aceito_powo,
+    
+    rank_aceito_powo,
+    
+    status_nome_aceito_powo,
+    
+    lifeform_aceito_powo
+  )
+
+
+# ============================================================
+# 37. DEVOLVER POWO PARA TABELA
+# ============================================================
+
+especies <- especies %>%
+  
+  left_join(
+    
+    dados_powo,
+    
+    by =
+      c(
+        "chave_busca" =
+          "chave_powo"
+      )
+  )
+
+
+# ============================================================
+# 38. MARCAR EMPATES POWO
+# ============================================================
+
+especies$empate_powo <-
+  especies$chave_busca %in%
+  chaves_empate
+
+
+# ============================================================
+# 39. RESULTADO FINAL CONSOLIDADO
+# ============================================================
+
+especies <- especies %>%
+  
+  mutate(
+    
+    base_conferencia =
+      case_when(
+        
+        conferencia_reflora ~
+          "REFLORA",
+        
+        !is.na(
+          decisao_powo
+        ) &
+          decisao_powo %in%
+          c(
+            "ACCEPTED",
+            "SYNONYM"
+          ) ~
+          "POWO",
+        
+        TRUE ~
+          NA_character_
+      ),
+    
+    
+    status_conferencia =
+      case_when(
+        
+        conferencia_reflora ~
+          "CONFERIDO_REFLORA",
+        
+        empate_powo ~
+          "EMPATE_POWO_REVISAR",
+        
+        decisao_powo ==
+          "ACCEPTED" ~
+          "CONFERIDO_POWO",
+        
+        decisao_powo ==
+          "SYNONYM" ~
+          "CONFERIDO_POWO_SINONIMO",
+        
+        decisao_powo ==
+          "REVISAR_STATUS" ~
+          "REVISAR_STATUS_POWO",
+        
+        TRUE ~
+          "NAO_ENCONTRADO"
+      ),
+    
+    
+    nome_aceito_final =
+      case_when(
+        
+        conferencia_reflora ~
+          nome_aceito_reflora,
+        
+        base_conferencia ==
+          "POWO" ~
+          ifelse(
+            is.na(autoria_aceita_powo) |
+              autoria_aceita_powo == "",
+            nome_aceito_powo,
+            paste(
+              nome_aceito_powo,
+              autoria_aceita_powo
+            )
+          ),
+        
+        TRUE ~
+          NA_character_
+      ),
+    
+    
+    familia_final =
+      case_when(
+        
+        conferencia_reflora ~
+          familia_reflora,
+        
+        base_conferencia ==
+          "POWO" ~
+          familia_aceita_powo,
+        
+        TRUE ~
+          NA_character_
+      ),
+    
+    
+    genero_final =
+      case_when(
+        
+        conferencia_reflora ~
+          genero_reflora,
+        
+        base_conferencia ==
+          "POWO" ~
+          genero_aceito_powo,
+        
+        TRUE ~
+          NA_character_
+      ),
+    
+    
+    nivel_taxonomico_final =
+      case_when(
+        
+        conferencia_reflora ~
+          nivel_taxonomico_reflora,
+        
+        base_conferencia ==
+          "POWO" ~
+          rank_aceito_powo,
+        
+        TRUE ~
+          NA_character_
+      ),
+    
+    
+    lifeForm_final =
+      case_when(
+        
+        conferencia_reflora ~
+          lifeForm_reflora,
+        
+        base_conferencia ==
+          "POWO" ~
+          lifeform_aceito_powo,
+        
+        TRUE ~
+          NA_character_
+      )
+  )
+
+
+# ============================================================
+# 40. RESUMO
+# ============================================================
+
+resumo <- especies %>%
+  
+  count(
+    status_conferencia,
+    name =
+      "numero_registros"
+  ) %>%
+  
+  arrange(
+    desc(
+      numero_registros
+    )
+  )
+
+
+cat("\n============================================\n")
+cat("RESUMO DA CONFERÊNCIA\n")
+cat("============================================\n\n")
+
+print(
+  resumo
+)
+
+
+# ============================================================
+# 41. DIAGNÓSTICO DOS HÍBRIDOS
+# ============================================================
+
+diagnostico_hibridos <- especies %>%
+  
+  filter(
+    hibrido
+  ) %>%
+  
+  select(
+    
+    especie,
+    
+    nome_corrigido,
+    
+    chave_busca,
+    
+    conferencia_reflora,
+    
+    nome_encontrado_reflora,
+    
+    decisao_powo,
+    
+    nome_encontrado_powo,
+    
+    nome_aceito_powo,
+    
+    status_conferencia,
+    
+    nome_aceito_final
+  )
+
+
+cat("\n============================================\n")
+cat("RESULTADO DOS HÍBRIDOS\n")
+cat("============================================\n\n")
+
+print(
+  diagnostico_hibridos
+)
+
+
+# ============================================================
+# 42. TABELAS PARA REVISÃO
+# ============================================================
+
+revisao <- especies %>%
+  
+  filter(
+    status_conferencia %in%
+      c(
+        "EMPATE_POWO_REVISAR",
+        "REVISAR_STATUS_POWO",
+        "NAO_ENCONTRADO"
+      )
+  )
+
+
+infraespecificos <- especies %>%
+  
+  filter(
+    !is.na(
+      infraespecifico_original
+    )
+  )
+
+
+hibridos <- especies %>%
+  
+  filter(
+    hibrido
+  )
+
+
+opcoes_empates_powo <-
+  correspondencias_powo %>%
+  
+  filter(
+    chave_powo %in%
+      chaves_empate
+  ) %>%
+  
+  arrange(
+    chave_powo,
+    prioridade_powo
+  )
+
+
+# ============================================================
+# 43. TESTES DE SEGURANÇA
+# ============================================================
+
+# ------------------------------------------------------------
+# Nenhum × pode ter virado ?
+# ------------------------------------------------------------
+
+if (
+  any(
+    especies$hibrido &
+      grepl(
+        "?",
+        especies$nome_corrigido,
+        fixed = TRUE
+      ),
+    na.rm = TRUE
+  )
+) {
+  
+  stop(
+    "ERRO: algum símbolo × foi convertido em ?."
+  )
+}
+
+
+# ------------------------------------------------------------
+# xanthorrhiza e xanthocarpa NÃO podem ser híbridos
+# ------------------------------------------------------------
+
+teste_x_normal <- especies %>%
+  
+  filter(
+    grepl(
+      "xanth",
+      especie,
+      ignore.case = TRUE
+    )
+  )
+
+
+if (
+  nrow(teste_x_normal) > 0 &&
+    any(
+      teste_x_normal$hibrido,
+      na.rm = TRUE
+    )
+) {
+  
+  stop(
+    paste(
+      "ERRO:",
+      "uma espécie iniciada por xanth- foi classificada como híbrido."
+    )
+  )
+}
+
+
+# ============================================================
+# 44. SALVAR EXCEL
+# ============================================================
+
+wb <- createWorkbook()
+
+
+# ------------------------------------------------------------
+# CONFERÊNCIA FINAL
+# ------------------------------------------------------------
+
+addWorksheet(
+  wb,
+  "conferencia_final"
+)
+
+writeData(
+  wb,
+  "conferencia_final",
+  especies
+)
+
+freezePane(
+  wb,
+  "conferencia_final",
+  firstRow = TRUE
+)
+
+
+# ------------------------------------------------------------
+# RESUMO
+# ------------------------------------------------------------
+
+addWorksheet(
+  wb,
+  "resumo"
+)
+
+writeData(
+  wb,
+  "resumo",
+  resumo
+)
+
+
+# ------------------------------------------------------------
+# REVISÃO
+# ------------------------------------------------------------
+
+addWorksheet(
+  wb,
+  "revisao"
+)
+
+writeData(
+  wb,
+  "revisao",
+  revisao
+)
+
+
+# ------------------------------------------------------------
+# INFRAESPECÍFICOS
+# ------------------------------------------------------------
+
+addWorksheet(
+  wb,
+  "infraespecificos"
+)
+
+writeData(
+  wb,
+  "infraespecificos",
+  infraespecificos
+)
+
+
+# ------------------------------------------------------------
+# HÍBRIDOS
+# ------------------------------------------------------------
+
+addWorksheet(
+  wb,
+  "hibridos"
+)
+
+writeData(
+  wb,
+  "hibridos",
+  hibridos
+)
+
+
+# ------------------------------------------------------------
+# EMPATES POWO
+# ------------------------------------------------------------
+
+addWorksheet(
+  wb,
+  "empates_powo"
+)
+
+writeData(
+  wb,
+  "empates_powo",
+  opcoes_empates_powo
+)
+
+
+# ============================================================
+# 45. AJUSTAR PLANILHAS
+# ============================================================
+
+for (
+  aba in
+  names(wb)
+) {
+  
+  freezePane(
+    wb,
+    aba,
+    firstRow = TRUE
+  )
+  
+  setColWidths(
+    wb,
+    aba,
+    cols =
+      1:ncol(
+        get(
+          switch(
+            aba,
+            
+            conferencia_final =
+              "especies",
+            
+            resumo =
+              "resumo",
+            
+            revisao =
+              "revisao",
+            
+            infraespecificos =
+              "infraespecificos",
+            
+            hibridos =
+              "hibridos",
+            
+            empates_powo =
+              "opcoes_empates_powo"
+          )
+        )
+      ),
+    widths =
+      "auto"
+  )
+}
+
+
+# ============================================================
+# 46. SALVAR
+# ============================================================
+
+saveWorkbook(
+  wb,
+  arquivo_saida,
+  overwrite = TRUE
+)
+
+
+cat("\n============================================\n")
+cat("CONFERÊNCIA FINALIZADA\n")
+cat("============================================\n\n")
+
+
+cat(
+  "Arquivo salvo em:\n",
+  arquivo_saida,
+  "\n\n"
+)
+
+
+cat(
+  "Total de registros:",
+  nrow(especies),
+  "\n"
+)
+
+
+cat(
+  "Conferidos no REFLORA:",
+  sum(
+    especies$conferencia_reflora,
+    na.rm = TRUE
+  ),
+  "\n"
+)
+
+
+cat(
+  "Conferidos no POWO:",
+  sum(
+    especies$base_conferencia ==
+      "POWO",
+    na.rm = TRUE
+  ),
+  "\n"
+)
+
+
+cat(
+  "Não encontrados:",
+  sum(
+    especies$status_conferencia ==
+      "NAO_ENCONTRADO",
+    na.rm = TRUE
+  ),
+  "\n"
+)
+
+
+cat(
+  "Híbridos:",
+  sum(
+    especies$hibrido,
+    na.rm = TRUE
+  ),
+  "\n"
+)
+
+
+cat(
+  "Infraespecíficos reduzidos ao nível de espécie:",
+  sum(
+    !is.na(
+      especies$infraespecifico_original
+    )
+  ),
+  "\n"
+)
