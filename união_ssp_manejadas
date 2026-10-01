@@ -1,0 +1,351 @@
+# ============================================================
+# UNIR NOMES ACEITOS
+# GUSTAVO + MANSFELD + WORLDCUP
+#
+# SAÍDA:
+#   nome_aceito
+#   referencia
+# ============================================================
+
+
+# ============================================================
+# 0. PACOTES
+# ============================================================
+
+pacotes <- c(
+  "readxl",
+  "dplyr",
+  "openxlsx"
+)
+
+pacotes_faltantes <- pacotes[
+  !pacotes %in% rownames(installed.packages())
+]
+
+if (length(pacotes_faltantes) > 0) {
+  install.packages(pacotes_faltantes)
+}
+
+library(readxl)
+library(dplyr)
+library(openxlsx)
+
+
+# ============================================================
+# 1. PASTA
+# ============================================================
+
+pasta_trabalho <-
+  "C:/Users/giuli/OneDrive/Documentos/Caapora/ssp_manejo"
+
+
+# ============================================================
+# 2. ARQUIVOS DE ENTRADA
+# ============================================================
+
+arquivo_gustavo <- file.path(
+  pasta_trabalho,
+  "ssp_gustavo_conferencia_botanica.xlsx"
+)
+
+arquivo_mansfeld <- file.path(
+  pasta_trabalho,
+  "ssp_mansfeld_conferencia_botanica.xlsx"
+)
+
+arquivo_worldcup <- file.path(
+  pasta_trabalho,
+  "ssp_worldcup_conferencia_botanica.xlsx"
+)
+
+
+# ============================================================
+# 3. ARQUIVO DE SAÍDA
+# ============================================================
+
+arquivo_saida <- file.path(
+  pasta_trabalho,
+  "nomes_aceitos_tres_bases.xlsx"
+)
+
+
+# ============================================================
+# 4. CONFERIR SE OS ARQUIVOS EXISTEM
+# ============================================================
+
+arquivos <- c(
+  arquivo_gustavo,
+  arquivo_mansfeld,
+  arquivo_worldcup
+)
+
+if (any(!file.exists(arquivos))) {
+  
+  stop(
+    paste(
+      "Arquivo(s) não encontrado(s):",
+      paste(
+        arquivos[!file.exists(arquivos)],
+        collapse = "\n"
+      ),
+      sep = "\n"
+    )
+  )
+}
+
+
+# ============================================================
+# 5. LER AS TRÊS TABELAS
+#
+# Usamos a aba "conferencia_final"
+# ============================================================
+
+gustavo <- read_excel(
+  arquivo_gustavo,
+  sheet = "conferencia_final"
+)
+
+mansfeld <- read_excel(
+  arquivo_mansfeld,
+  sheet = "conferencia_final"
+)
+
+worldcup <- read_excel(
+  arquivo_worldcup,
+  sheet = "conferencia_final"
+)
+
+
+# ============================================================
+# 6. CONFERIR A COLUNA nome_aceito_final
+# ============================================================
+
+if (!"nome_aceito_final" %in% names(gustavo)) {
+  stop(
+    'Gustavo não possui a coluna "nome_aceito_final".'
+  )
+}
+
+if (!"nome_aceito_final" %in% names(mansfeld)) {
+  stop(
+    'Mansfeld não possui a coluna "nome_aceito_final".'
+  )
+}
+
+if (!"nome_aceito_final" %in% names(worldcup)) {
+  stop(
+    'WorldCuP não possui a coluna "nome_aceito_final".'
+  )
+}
+
+
+# ============================================================
+# 7. PEGAR SOMENTE NOME ACEITO + REFERÊNCIA
+# ============================================================
+
+gustavo_final <- gustavo %>%
+  
+  transmute(
+    
+    nome_aceito =
+      as.character(
+        nome_aceito_final
+      ),
+    
+    referencia =
+      "Gustavo"
+  )
+
+
+mansfeld_final <- mansfeld %>%
+  
+  transmute(
+    
+    nome_aceito =
+      as.character(
+        nome_aceito_final
+      ),
+    
+    referencia =
+      "Mansfeld"
+  )
+
+
+worldcup_final <- worldcup %>%
+  
+  transmute(
+    
+    nome_aceito =
+      as.character(
+        nome_aceito_final
+      ),
+    
+    referencia =
+      "WorldCuP"
+  )
+
+
+# ============================================================
+# 8. UNIR AS TRÊS BASES
+# ============================================================
+
+nomes_aceitos <- bind_rows(
+  gustavo_final,
+  mansfeld_final,
+  worldcup_final
+)
+
+
+# ============================================================
+# 9. REMOVER NOMES VAZIOS
+# ============================================================
+
+nomes_aceitos <- nomes_aceitos %>%
+  
+  mutate(
+    nome_aceito =
+      trimws(
+        nome_aceito
+      )
+  ) %>%
+  
+  filter(
+    !is.na(nome_aceito),
+    nome_aceito != ""
+  )
+
+
+# ============================================================
+# 10. JUNTAR REFERÊNCIAS DO MESMO NOME
+#
+# Cada nome aceito ficará em UMA ÚNICA LINHA.
+#
+# Exemplo:
+#
+# Inga edulis | Gustavo
+# Inga edulis | Mansfeld
+# Inga edulis | WorldCuP
+#
+# vira:
+#
+# Inga edulis | Gustavo, Mansfeld, WorldCuP
+# ============================================================
+
+nomes_aceitos <- nomes_aceitos %>%
+  
+  # primeiro garantir que não existam duplicatas
+  # do mesmo nome dentro da mesma referência
+  distinct(
+    nome_aceito,
+    referencia
+  ) %>%
+  
+  group_by(
+    nome_aceito
+  ) %>%
+  
+  summarise(
+    
+    referencia =
+      paste(
+        unique(referencia),
+        collapse = ", "
+      ),
+    
+    .groups = "drop"
+  )
+
+
+# ============================================================
+# 11. ORDENAR ALFABETICAMENTE
+# ============================================================
+
+nomes_aceitos <- nomes_aceitos %>%
+  
+  arrange(
+    nome_aceito
+  )
+
+
+# ============================================================
+# 12. RESUMO
+# ============================================================
+
+cat("\n============================================\n")
+cat("TABELA FINAL DE NOMES ACEITOS\n")
+cat("============================================\n\n")
+
+
+cat(
+  "Total de nomes aceitos únicos:",
+  nrow(nomes_aceitos),
+  "\n"
+)
+
+
+cat("\nExemplo:\n")
+
+print(
+  head(
+    nomes_aceitos,
+    30
+  )
+)
+
+
+# ============================================================
+# 13. CONFERÊNCIA DE DUPLICATAS
+# ============================================================
+
+duplicados <- nomes_aceitos %>%
+  
+  count(
+    nome_aceito
+  ) %>%
+  
+  filter(
+    n > 1
+  )
+
+
+if (nrow(duplicados) > 0) {
+  
+  stop(
+    paste0(
+      "ERRO: ainda existem ",
+      nrow(duplicados),
+      " nomes duplicados."
+    )
+  )
+  
+} else {
+  
+  cat(
+    "\nOK: cada nome aceito aparece somente uma vez.\n"
+  )
+}
+
+
+# ============================================================
+# 14. SALVAR
+# ============================================================
+
+write.xlsx(
+  nomes_aceitos,
+  arquivo_saida,
+  overwrite = TRUE
+)
+
+
+# ============================================================
+# 15. FINAL
+# ============================================================
+
+cat("\n============================================\n")
+cat("ARQUIVO SALVO\n")
+cat("============================================\n\n")
+
+cat(
+  arquivo_saida,
+  "\n"
+)
