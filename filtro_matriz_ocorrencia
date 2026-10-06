@@ -1,0 +1,1026 @@
+# ============================================================
+# FILTRO FINAL DE RIQUEZA DOS INVENTÁRIOS
+# CRIAÇÃO DA MATRIZ DE OCORRÊNCIA 3
+# ============================================================
+#
+# CRITÉRIO:
+#
+# Limite inferior = 13 espécies
+# Limite superior = 289 espécies
+#
+# Os limites são INCLUSIVOS:
+#
+# MANTER:
+# riqueza >= 13 E riqueza <= 289
+#
+# EXCLUIR:
+# riqueza < 13 OU riqueza > 289
+#
+#
+# IMPORTANTE:
+#
+# Os limites foram definidos a partir dos inventários
+# de exatamente 1 ha.
+#
+# Nesta etapa, eles serão aplicados a TODOS os inventários
+# da matriz de ocorrência 2.
+#
+# A área amostrada será mantida no diagnóstico para
+# permitir avaliar posteriormente o efeito desse critério.
+#
+#
+# SAÍDAS:
+#
+# 1. Matriz_original_ocorrencia_3.csv
+#
+# 2. Diagnostico_filtro_riqueza_matriz3.xlsx
+#
+# A matriz 2 NÃO será alterada.
+#
+# ============================================================
+
+
+
+# ============================================================
+# 0. PACOTES
+# ============================================================
+
+library(dplyr)
+library(stringr)
+library(openxlsx)
+
+
+
+# ============================================================
+# 1. DEFINIR LIMITES
+# ============================================================
+
+limite_inferior <- 13
+
+limite_superior <- 289
+
+
+
+# ============================================================
+# 2. CAMINHOS
+# ============================================================
+
+arquivo_matriz3 <- file.path(
+  pasta_caapora,
+  "Matrizes_ocorrência",
+  "Matriz_original_ocorrencia_3.csv"
+)
+
+
+arquivo_diagnostico_filtro <- file.path(
+  pasta_caapora,
+  "Matrizes_ocorrência",
+  "Diagnostico_filtro_riqueza_matriz3.xlsx"
+)
+
+
+
+# ============================================================
+# 3. CONFERIR OBJETOS NECESSÁRIOS
+# ============================================================
+
+objetos_necessarios <- c(
+  "matriz",
+  "riqueza",
+  "referencia",
+  "inventarios"
+)
+
+
+objetos_faltantes <- objetos_necessarios[
+  
+  !sapply(
+    objetos_necessarios,
+    exists
+  )
+  
+]
+
+
+if (length(objetos_faltantes) > 0) {
+  
+  stop(
+    paste0(
+      "Objetos não encontrados: ",
+      paste(
+        objetos_faltantes,
+        collapse = ", "
+      ),
+      "\nExecute primeiro o script principal de riqueza."
+    )
+  )
+  
+}
+
+
+
+# ============================================================
+# 4. PREPARAR TABELA DE RIQUEZA
+# ============================================================
+#
+# A tabela riqueza possui:
+#
+# ponto
+# riqueza
+# chave_ponto
+#
+# Vamos classificar cada inventário como:
+#
+# MANTIDO
+# EXCLUÍDO - abaixo do limite
+# EXCLUÍDO - acima do limite
+#
+# ============================================================
+
+diagnostico_filtro <- riqueza %>%
+  
+  mutate(
+    
+    status_filtro =
+      case_when(
+        
+        riqueza < limite_inferior ~
+          "EXCLUIDO - riqueza abaixo de 13",
+        
+        riqueza > limite_superior ~
+          "EXCLUIDO - riqueza acima de 289",
+        
+        TRUE ~
+          "MANTIDO"
+        
+      )
+    
+  )
+
+
+
+# ============================================================
+# 5. ADICIONAR METADADOS DA REFERÊNCIA
+# ============================================================
+#
+# Vamos acrescentar:
+#
+# domínio
+# área
+# referência
+# critério de inclusão
+# localização
+# coordenadas
+#
+# Isso permitirá entender quais inventários foram
+# eliminados e por quê.
+#
+# ============================================================
+
+colunas_referencia_diagnostico <- c(
+  "chave_ponto",
+  "dominio",
+  "area-amostrada-ha",
+  "responsavel",
+  "ref-autor",
+  "ref-ano",
+  "criterio-inclusao",
+  "país",
+  "estado",
+  "municipio",
+  "nome_do_local",
+  "unidade_conservacao",
+  "latitude",
+  "longitude",
+  "altitude-m",
+  "veg-tipo-autor",
+  "oliveira-fitofisionomia",
+  "OBS 1",
+  "OBS 2"
+)
+
+
+colunas_referencia_existentes <-
+  intersect(
+    colunas_referencia_diagnostico,
+    names(referencia)
+  )
+
+
+diagnostico_filtro <- diagnostico_filtro %>%
+  
+  left_join(
+    
+    referencia %>%
+      
+      select(
+        all_of(
+          colunas_referencia_existentes
+        )
+      ),
+    
+    by = "chave_ponto"
+    
+  )
+
+
+
+# ============================================================
+# 6. IDENTIFICAR INVENTÁRIOS MANTIDOS
+# ============================================================
+
+inventarios_mantidos <- diagnostico_filtro %>%
+  
+  filter(
+    status_filtro == "MANTIDO"
+  ) %>%
+  
+  pull(
+    ponto
+  )
+
+
+
+# ============================================================
+# 7. IDENTIFICAR INVENTÁRIOS EXCLUÍDOS
+# ============================================================
+
+inventarios_excluidos <- diagnostico_filtro %>%
+  
+  filter(
+    status_filtro != "MANTIDO"
+  ) %>%
+  
+  pull(
+    ponto
+  )
+
+
+
+# ============================================================
+# 8. CONFERÊNCIA
+# ============================================================
+
+cat(
+  "\n============================================\n",
+  "RESULTADO DO FILTRO DE RIQUEZA\n",
+  "============================================\n",
+  sep = ""
+)
+
+
+cat(
+  "Limite inferior:",
+  limite_inferior,
+  "\n"
+)
+
+
+cat(
+  "Limite superior:",
+  limite_superior,
+  "\n\n"
+)
+
+
+cat(
+  "Inventários antes do filtro:",
+  length(inventarios),
+  "\n"
+)
+
+
+cat(
+  "Inventários mantidos:",
+  length(inventarios_mantidos),
+  "\n"
+)
+
+
+cat(
+  "Inventários excluídos:",
+  length(inventarios_excluidos),
+  "\n"
+)
+
+
+
+# ============================================================
+# 9. SEPARAR EXCLUSÕES POR MOTIVO
+# ============================================================
+
+excluidos_abaixo <- diagnostico_filtro %>%
+  
+  filter(
+    riqueza < limite_inferior
+  )
+
+
+excluidos_acima <- diagnostico_filtro %>%
+  
+  filter(
+    riqueza > limite_superior
+  )
+
+
+cat(
+  "\nExcluídos por riqueza < 13:",
+  nrow(excluidos_abaixo),
+  "\n"
+)
+
+
+cat(
+  "Excluídos por riqueza > 289:",
+  nrow(excluidos_acima),
+  "\n"
+)
+
+
+
+# ============================================================
+# 10. CONFERIR SE TODOS OS INVENTÁRIOS FORAM CLASSIFICADOS
+# ============================================================
+
+total_classificado <-
+  length(inventarios_mantidos) +
+  length(inventarios_excluidos)
+
+
+if (total_classificado != length(inventarios)) {
+  
+  stop(
+    paste0(
+      "ERRO: número de inventários classificados (",
+      total_classificado,
+      ") diferente do número original (",
+      length(inventarios),
+      ")."
+    )
+  )
+  
+}
+
+
+cat(
+  "\nOK: todos os inventários foram classificados.\n"
+)
+
+
+
+# ============================================================
+# 11. COLUNAS TAXONÔMICAS
+# ============================================================
+#
+# Essas colunas serão sempre preservadas.
+#
+# ============================================================
+
+colunas_taxonomicas <- c(
+  "nome_aceito",
+  "familia",
+  "genero",
+  "habito"
+)
+
+
+colunas_taxonomicas_existentes <-
+  intersect(
+    colunas_taxonomicas,
+    names(matriz)
+  )
+
+
+
+# ============================================================
+# 12. CRIAR MATRIZ 3
+# ============================================================
+#
+# A nova matriz terá:
+#
+# nome_aceito
+# familia
+# genero
+# habito
+#
+# +
+#
+# apenas os inventários cuja riqueza esteja entre
+# 13 e 289 espécies.
+#
+# ============================================================
+
+matriz3 <- matriz %>%
+  
+  select(
+    
+    all_of(
+      colunas_taxonomicas_existentes
+    ),
+    
+    all_of(
+      inventarios_mantidos
+    )
+    
+  )
+
+
+
+# ============================================================
+# 13. CONFERIR DIMENSÕES
+# ============================================================
+
+cat(
+  "\n============================================\n",
+  "MATRIZ 3\n",
+  "============================================\n",
+  sep = ""
+)
+
+
+cat(
+  "Número de espécies:",
+  nrow(matriz3),
+  "\n"
+)
+
+
+cat(
+  "Colunas taxonômicas:",
+  length(colunas_taxonomicas_existentes),
+  "\n"
+)
+
+
+cat(
+  "Inventários mantidos:",
+  length(inventarios_mantidos),
+  "\n"
+)
+
+
+cat(
+  "Total de colunas da matriz 3:",
+  ncol(matriz3),
+  "\n"
+)
+
+
+
+# ============================================================
+# 14. CONFERIR SE ALGUM INVENTÁRIO EXCLUÍDO
+# PERMANECEU NA MATRIZ
+# ============================================================
+
+excluidos_ainda_presentes <-
+  intersect(
+    inventarios_excluidos,
+    names(matriz3)
+  )
+
+
+if (length(excluidos_ainda_presentes) > 0) {
+  
+  stop(
+    paste0(
+      "ERRO: existem inventários excluídos ainda presentes: ",
+      paste(
+        excluidos_ainda_presentes,
+        collapse = ", "
+      )
+    )
+  )
+  
+}
+
+
+cat(
+  "OK: nenhum inventário excluído permaneceu na matriz 3.\n"
+)
+
+
+
+# ============================================================
+# 15. CONFERIR SE TODOS OS MANTIDOS ESTÃO NA MATRIZ
+# ============================================================
+
+mantidos_ausentes <-
+  setdiff(
+    inventarios_mantidos,
+    names(matriz3)
+  )
+
+
+if (length(mantidos_ausentes) > 0) {
+  
+  stop(
+    paste0(
+      "ERRO: inventários mantidos ausentes da matriz 3: ",
+      paste(
+        mantidos_ausentes,
+        collapse = ", "
+      )
+    )
+  )
+  
+}
+
+
+cat(
+  "OK: todos os inventários mantidos estão na matriz 3.\n"
+)
+
+
+
+# ============================================================
+# 16. SALVAR MATRIZ 3
+# ============================================================
+#
+# IMPORTANTE:
+#
+# Como a matriz original usa vírgula como separador,
+# vamos manter o mesmo padrão.
+#
+# row.names = FALSE evita criar uma coluna extra
+# com o número das linhas.
+#
+# ============================================================
+
+write.csv(
+  matriz3,
+  arquivo_matriz3,
+  row.names = FALSE,
+  fileEncoding = "UTF-8"
+)
+
+
+
+# ============================================================
+# 17. CRIAR RESUMO DO FILTRO
+# ============================================================
+
+resumo_filtro <- data.frame(
+  
+  criterio = c(
+    "Limite inferior",
+    "Limite superior",
+    "Inventários antes do filtro",
+    "Inventários mantidos",
+    "Inventários excluídos",
+    "Excluídos abaixo do limite",
+    "Excluídos acima do limite"
+  ),
+  
+  
+  valor = c(
+    limite_inferior,
+    limite_superior,
+    length(inventarios),
+    length(inventarios_mantidos),
+    length(inventarios_excluidos),
+    nrow(excluidos_abaixo),
+    nrow(excluidos_acima)
+  ),
+  
+  stringsAsFactors = FALSE
+  
+)
+
+
+
+# ============================================================
+# 18. RESUMO DAS EXCLUSÕES POR BIOMA
+# ============================================================
+
+resumo_exclusoes_bioma <- diagnostico_filtro %>%
+  
+  filter(
+    status_filtro != "MANTIDO"
+  ) %>%
+  
+  group_by(
+    dominio,
+    status_filtro
+  ) %>%
+  
+  summarise(
+    n_inventarios = n(),
+    .groups = "drop"
+  ) %>%
+  
+  arrange(
+    dominio,
+    status_filtro
+  )
+
+
+
+# ============================================================
+# 19. RESUMO DOS MANTIDOS POR BIOMA
+# ============================================================
+
+resumo_mantidos_bioma <- diagnostico_filtro %>%
+  
+  filter(
+    status_filtro == "MANTIDO"
+  ) %>%
+  
+  group_by(
+    dominio
+  ) %>%
+  
+  summarise(
+    
+    n_inventarios =
+      n(),
+    
+    
+    riqueza_minima =
+      min(
+        riqueza,
+        na.rm = TRUE
+      ),
+    
+    
+    riqueza_media =
+      round(
+        mean(
+          riqueza,
+          na.rm = TRUE
+        ),
+        2
+      ),
+    
+    
+    riqueza_mediana =
+      median(
+        riqueza,
+        na.rm = TRUE
+      ),
+    
+    
+    riqueza_maxima =
+      max(
+        riqueza,
+        na.rm = TRUE
+      ),
+    
+    
+    .groups = "drop"
+    
+  )
+
+
+
+# ============================================================
+# 20. ORDENAR DIAGNÓSTICO
+# ============================================================
+
+diagnostico_filtro <- diagnostico_filtro %>%
+  
+  arrange(
+    status_filtro,
+    riqueza
+  )
+
+
+excluidos_abaixo <- excluidos_abaixo %>%
+  
+  arrange(
+    riqueza
+  )
+
+
+excluidos_acima <- excluidos_acima %>%
+  
+  arrange(
+    desc(riqueza)
+  )
+
+
+
+# ============================================================
+# 21. CRIAR EXCEL DE DIAGNÓSTICO
+# ============================================================
+
+wb_filtro <- createWorkbook()
+
+
+
+# ------------------------------------------------------------
+# ABA 1 - RESUMO
+# ------------------------------------------------------------
+
+addWorksheet(
+  wb_filtro,
+  "resumo"
+)
+
+
+writeData(
+  wb_filtro,
+  "resumo",
+  resumo_filtro
+)
+
+
+
+# ------------------------------------------------------------
+# ABA 2 - TODOS OS INVENTÁRIOS
+# ------------------------------------------------------------
+
+addWorksheet(
+  wb_filtro,
+  "todos_inventarios"
+)
+
+
+writeData(
+  wb_filtro,
+  "todos_inventarios",
+  diagnostico_filtro
+)
+
+
+
+# ------------------------------------------------------------
+# ABA 3 - INVENTÁRIOS MANTIDOS
+# ------------------------------------------------------------
+
+addWorksheet(
+  wb_filtro,
+  "mantidos"
+)
+
+
+writeData(
+  wb_filtro,
+  "mantidos",
+  diagnostico_filtro %>%
+    filter(
+      status_filtro == "MANTIDO"
+    )
+)
+
+
+
+# ------------------------------------------------------------
+# ABA 4 - TODOS OS EXCLUÍDOS
+# ------------------------------------------------------------
+
+addWorksheet(
+  wb_filtro,
+  "excluidos"
+)
+
+
+writeData(
+  wb_filtro,
+  "excluidos",
+  diagnostico_filtro %>%
+    filter(
+      status_filtro != "MANTIDO"
+    )
+)
+
+
+
+# ------------------------------------------------------------
+# ABA 5 - EXCLUÍDOS ABAIXO DE 13
+# ------------------------------------------------------------
+
+addWorksheet(
+  wb_filtro,
+  "excluidos_abaixo_13"
+)
+
+
+writeData(
+  wb_filtro,
+  "excluidos_abaixo_13",
+  excluidos_abaixo
+)
+
+
+
+# ------------------------------------------------------------
+# ABA 6 - EXCLUÍDOS ACIMA DE 289
+# ------------------------------------------------------------
+
+addWorksheet(
+  wb_filtro,
+  "excluidos_acima_289"
+)
+
+
+writeData(
+  wb_filtro,
+  "excluidos_acima_289",
+  excluidos_acima
+)
+
+
+
+# ------------------------------------------------------------
+# ABA 7 - EXCLUSÕES POR BIOMA
+# ------------------------------------------------------------
+
+addWorksheet(
+  wb_filtro,
+  "exclusoes_por_bioma"
+)
+
+
+writeData(
+  wb_filtro,
+  "exclusoes_por_bioma",
+  resumo_exclusoes_bioma
+)
+
+
+
+# ------------------------------------------------------------
+# ABA 8 - MANTIDOS POR BIOMA
+# ------------------------------------------------------------
+
+addWorksheet(
+  wb_filtro,
+  "mantidos_por_bioma"
+)
+
+
+writeData(
+  wb_filtro,
+  "mantidos_por_bioma",
+  resumo_mantidos_bioma
+)
+
+
+
+# ============================================================
+# 22. FORMATAR EXCEL
+# ============================================================
+
+abas_filtro <- names(
+  wb_filtro
+)
+
+
+for (aba in abas_filtro) {
+  
+  freezePane(
+    wb_filtro,
+    aba,
+    firstRow = TRUE
+  )
+  
+  
+  dados_aba <- readWorkbook(
+    wb_filtro,
+    sheet = aba
+  )
+  
+  
+  if (ncol(dados_aba) > 0) {
+    
+    setColWidths(
+      wb_filtro,
+      aba,
+      cols = 1:ncol(dados_aba),
+      widths = "auto"
+    )
+    
+  }
+  
+}
+
+
+
+# ============================================================
+# 23. SALVAR DIAGNÓSTICO
+# ============================================================
+
+saveWorkbook(
+  wb_filtro,
+  arquivo_diagnostico_filtro,
+  overwrite = TRUE
+)
+
+
+
+# ============================================================
+# 24. RESULTADO FINAL
+# ============================================================
+
+cat(
+  "\n\n============================================\n",
+  "FILTRO DE RIQUEZA CONCLUÍDO\n",
+  "============================================\n",
+  sep = ""
+)
+
+
+cat(
+  "\nCritério utilizado:\n"
+)
+
+
+cat(
+  limite_inferior,
+  "<= riqueza <=",
+  limite_superior,
+  "\n\n"
+)
+
+
+cat(
+  "Inventários antes do filtro:",
+  length(inventarios),
+  "\n"
+)
+
+
+cat(
+  "Inventários mantidos:",
+  length(inventarios_mantidos),
+  "\n"
+)
+
+
+cat(
+  "Inventários excluídos:",
+  length(inventarios_excluidos),
+  "\n"
+)
+
+
+cat(
+  "  - riqueza < 13:",
+  nrow(excluidos_abaixo),
+  "\n"
+)
+
+
+cat(
+  "  - riqueza > 289:",
+  nrow(excluidos_acima),
+  "\n"
+)
+
+
+cat(
+  "\nNúmero de espécies na matriz 3:",
+  nrow(matriz3),
+  "\n"
+)
+
+
+cat(
+  "Número de inventários na matriz 3:",
+  length(inventarios_mantidos),
+  "\n"
+)
+
+
+cat(
+  "\nMatriz 3 salva em:\n",
+  arquivo_matriz3,
+  "\n"
+)
+
+
+cat(
+  "\nDiagnóstico salvo em:\n",
+  arquivo_diagnostico_filtro,
+  "\n"
+)
+
+
+cat(
+  "============================================\n"
+)
+
+
+
+# ============================================================
+# 25. MOSTRAR RESUMO NO CONSOLE
+# ============================================================
+
+cat(
+  "\nRESUMO DO FILTRO:\n\n"
+)
+
+
+print(
+  resumo_filtro
+)
+
+
+cat(
+  "\nEXCLUSÕES POR BIOMA:\n\n"
+)
+
+
+print(
+  resumo_exclusoes_bioma
+)
