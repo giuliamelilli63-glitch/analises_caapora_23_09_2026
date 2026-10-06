@@ -1,0 +1,1053 @@
+# ============================================================
+# CRIAR MATRIZ DE ABUNDÂNCIA 1
+# A PARTIR DOS INVENTÁRIOS DA MATRIZ DE OCORRÊNCIA 3
+# ============================================================
+#
+# OBJETIVO:
+#
+# 1. Ler a matriz de abundância original.
+#
+# 2. Usar a Matriz_original_ocorrencia_3.csv como referência
+#    para saber quais inventários permaneceram após o filtro
+#    de riqueza.
+#
+# 3. Manter na matriz de abundância somente esses inventários.
+#
+# 4. Remover linhas que, depois da retirada dos inventários,
+#    ficaram com abundância = 0 em TODOS os inventários
+#    restantes.
+#
+# 5. NÃO consolidar espécies duplicadas.
+#
+# 6. NÃO realizar conferência botânica nesta etapa.
+#
+#
+# ENTRADAS:
+#
+# Matriz_original_abundancia.csv
+# Matriz_original_ocorrencia_3.csv
+#
+#
+# SAÍDAS:
+#
+# Matriz_abundancia_1.csv
+# Diagnostico_matriz_abundancia_1.xlsx
+#
+# ============================================================
+
+
+
+# ============================================================
+# 0. PACOTES
+# ============================================================
+
+pacotes <- c(
+  "dplyr",
+  "openxlsx"
+)
+
+
+for (p in pacotes) {
+  
+  if (!requireNamespace(p, quietly = TRUE)) {
+    
+    install.packages(p)
+    
+  }
+  
+}
+
+
+library(dplyr)
+library(openxlsx)
+
+
+
+# ============================================================
+# 1. PASTAS
+# ============================================================
+
+pasta_caapora <-
+  "C:/Users/giuli/OneDrive/Documentos/Caapora"
+
+
+pasta_abundancia <- file.path(
+  pasta_caapora,
+  "Matrizes_abundancia"
+)
+
+
+
+# ============================================================
+# 2. ARQUIVOS DE ENTRADA
+# ============================================================
+
+
+# ------------------------------------------------------------
+# MATRIZ DE OCORRÊNCIA 3
+# ------------------------------------------------------------
+
+arquivo_ocorrencia3 <- file.path(
+  pasta_caapora,
+  "Matrizes_ocorrência",
+  "Matriz_original_ocorrencia_3.csv"
+)
+
+
+
+# ------------------------------------------------------------
+# MATRIZ DE ABUNDÂNCIA ORIGINAL
+# ------------------------------------------------------------
+
+arquivo_abundancia_original <- file.path(
+  pasta_abundancia,
+  "Matriz_original_abundancia.csv"
+)
+
+
+
+# ============================================================
+# 3. ARQUIVOS DE SAÍDA
+# ============================================================
+
+
+# ------------------------------------------------------------
+# NOVA MATRIZ DE ABUNDÂNCIA
+# ------------------------------------------------------------
+
+arquivo_abundancia1 <- file.path(
+  pasta_abundancia,
+  "Matriz_abundancia_1.csv"
+)
+
+
+
+# ------------------------------------------------------------
+# DIAGNÓSTICO
+# ------------------------------------------------------------
+
+arquivo_diagnostico <- file.path(
+  pasta_abundancia,
+  "Diagnostico_matriz_abundancia_1.xlsx"
+)
+
+
+
+# ============================================================
+# 4. CONFERIR SE OS ARQUIVOS EXISTEM
+# ============================================================
+
+if (!file.exists(arquivo_ocorrencia3)) {
+  
+  stop(
+    paste0(
+      "Arquivo de ocorrência 3 não encontrado:\n",
+      arquivo_ocorrencia3
+    )
+  )
+  
+}
+
+
+if (!file.exists(arquivo_abundancia_original)) {
+  
+  stop(
+    paste0(
+      "Arquivo de abundância original não encontrado:\n",
+      arquivo_abundancia_original
+    )
+  )
+  
+}
+
+
+
+# ============================================================
+# 5. LER MATRIZ DE OCORRÊNCIA 3
+# ============================================================
+
+ocorrencia3 <- read.csv(
+  arquivo_ocorrencia3,
+  header = TRUE,
+  sep = ",",
+  stringsAsFactors = FALSE,
+  check.names = FALSE,
+  fileEncoding = "latin1"
+)
+
+
+
+# ============================================================
+# 6. LER MATRIZ DE ABUNDÂNCIA ORIGINAL
+# ============================================================
+#
+# IMPORTANTE:
+# Esta matriz utiliza PONTO E VÍRGULA (;) como separador.
+#
+# ============================================================
+
+abundancia <- read.csv(
+  arquivo_abundancia_original,
+  header = TRUE,
+  sep = ";",
+  stringsAsFactors = FALSE,
+  check.names = FALSE,
+  fileEncoding = "latin1"
+)
+
+# ============================================================
+# 7. MOSTRAR DIMENSÕES DAS MATRIZES
+# ============================================================
+
+cat(
+  "\n============================================\n",
+  "MATRIZES CARREGADAS\n",
+  "============================================\n",
+  sep = ""
+)
+
+
+cat(
+  "\nOcorrência 3:\n",
+  nrow(ocorrencia3),
+  "linhas x",
+  ncol(ocorrencia3),
+  "colunas\n"
+)
+
+
+cat(
+  "\nAbundância original:\n",
+  nrow(abundancia),
+  "linhas x",
+  ncol(abundancia),
+  "colunas\n"
+)
+
+
+
+# ============================================================
+# 8. IDENTIFICAR INVENTÁRIOS DA OCORRÊNCIA 3
+# ============================================================
+
+inventarios_ocorrencia3 <- grep(
+  "^t[0-9]+$",
+  names(ocorrencia3),
+  value = TRUE,
+  ignore.case = TRUE
+)
+
+
+
+# ============================================================
+# 9. IDENTIFICAR INVENTÁRIOS DA ABUNDÂNCIA ORIGINAL
+# ============================================================
+
+inventarios_abundancia <- grep(
+  "^t[0-9]+$",
+  names(abundancia),
+  value = TRUE,
+  ignore.case = TRUE
+)
+
+
+
+# ============================================================
+# 10. DEFINIR COLUNAS DE INFORMAÇÃO DA ABUNDÂNCIA
+# ============================================================
+#
+# Estrutura:
+#
+# familia
+# genero
+# especie
+# identificacao
+# t1
+# t2
+# t3
+# ...
+#
+# ============================================================
+
+colunas_info <- c(
+  "familia",
+  "genero",
+  "especie",
+  "identificacao"
+)
+
+
+colunas_info_existentes <- intersect(
+  colunas_info,
+  names(abundancia)
+)
+
+
+colunas_info_faltantes <- setdiff(
+  colunas_info,
+  names(abundancia)
+)
+
+
+
+# ============================================================
+# 11. CONFERIR COLUNAS DE INFORMAÇÃO
+# ============================================================
+
+cat(
+  "\n============================================\n",
+  "COLUNAS DE INFORMAÇÃO\n",
+  "============================================\n",
+  sep = ""
+)
+
+
+cat(
+  "Encontradas:\n"
+)
+
+
+print(
+  colunas_info_existentes
+)
+
+
+if (length(colunas_info_faltantes) > 0) {
+  
+  cat(
+    "\nATENÇÃO - colunas esperadas não encontradas:\n"
+  )
+  
+  
+  print(
+    colunas_info_faltantes
+  )
+  
+}
+
+
+
+# ============================================================
+# 12. COMPARAR INVENTÁRIOS
+# ============================================================
+
+
+# Inventários que ficaram na ocorrência 3,
+# mas não existem na abundância
+
+faltando_na_abundancia <- setdiff(
+  inventarios_ocorrencia3,
+  inventarios_abundancia
+)
+
+
+
+# Inventários existentes na abundância original,
+# mas que foram retirados da ocorrência
+
+extras_na_abundancia <- setdiff(
+  inventarios_abundancia,
+  inventarios_ocorrencia3
+)
+
+
+
+cat(
+  "\n============================================\n",
+  "COMPARAÇÃO DOS INVENTÁRIOS\n",
+  "============================================\n",
+  sep = ""
+)
+
+
+cat(
+  "Inventários na ocorrência 3:",
+  length(inventarios_ocorrencia3),
+  "\n"
+)
+
+
+cat(
+  "Inventários na abundância original:",
+  length(inventarios_abundancia),
+  "\n"
+)
+
+
+cat(
+  "Inventários da ocorrência 3 ausentes na abundância:",
+  length(faltando_na_abundancia),
+  "\n"
+)
+
+
+cat(
+  "Inventários da abundância que serão retirados:",
+  length(extras_na_abundancia),
+  "\n"
+)
+
+
+
+# ============================================================
+# 13. MOSTRAR INVENTÁRIOS AUSENTES
+# ============================================================
+
+if (length(faltando_na_abundancia) > 0) {
+  
+  cat(
+    "\nATENÇÃO!\n",
+    "Os seguintes inventários da ocorrência 3 ",
+    "não existem na matriz de abundância:\n",
+    sep = ""
+  )
+  
+  
+  print(
+    faltando_na_abundancia
+  )
+  
+}
+
+
+
+# ============================================================
+# 14. DEFINIR INVENTÁRIOS QUE SERÃO MANTIDOS
+# ============================================================
+#
+# A ordem seguirá a Matriz_original_ocorrencia_3.
+#
+# ============================================================
+
+inventarios_mantidos <- inventarios_ocorrencia3[
+  
+  inventarios_ocorrencia3 %in%
+    inventarios_abundancia
+  
+]
+
+
+
+# ============================================================
+# 15. CRIAR MATRIZ INTERMEDIÁRIA
+# ============================================================
+#
+# Aqui retiramos apenas os inventários excluídos.
+#
+# Ainda NÃO retiramos nenhuma espécie/linha.
+#
+# ============================================================
+
+abundancia1_pre <- abundancia[
+  
+  ,
+  
+  c(
+    colunas_info_existentes,
+    inventarios_mantidos
+  ),
+  
+  drop = FALSE
+  
+]
+
+
+
+# ============================================================
+# 16. TRANSFORMAR COLUNAS DOS INVENTÁRIOS EM NUMÉRICAS
+# ============================================================
+
+for (ponto in inventarios_mantidos) {
+  
+  abundancia1_pre[[ponto]] <-
+    suppressWarnings(
+      as.numeric(
+        abundancia1_pre[[ponto]]
+      )
+    )
+  
+}
+
+
+
+# ============================================================
+# 17. CALCULAR ABUNDÂNCIA TOTAL DE CADA LINHA
+# ============================================================
+#
+# Essa soma é feita APENAS nos inventários mantidos.
+#
+# Se a soma for zero, significa que aquela linha estava
+# presente exclusivamente nos inventários retirados.
+#
+# ============================================================
+
+abundancia_total_linha <- rowSums(
+  
+  abundancia1_pre[
+    ,
+    inventarios_mantidos,
+    drop = FALSE
+  ],
+  
+  na.rm = TRUE
+  
+)
+
+
+
+# ============================================================
+# 18. IDENTIFICAR LINHAS QUE FICARAM COM ZERO
+# ============================================================
+
+indice_excluidas_zero <-
+  abundancia_total_linha == 0
+
+
+
+# ============================================================
+# 19. CRIAR DIAGNÓSTICO DAS LINHAS EXCLUÍDAS
+# ============================================================
+#
+# Guardamos as informações taxonômicas originais.
+#
+# Também registramos o número da linha original para
+# rastreabilidade.
+#
+# ============================================================
+
+linhas_excluidas_zero <- abundancia1_pre[
+  
+  indice_excluidas_zero,
+  
+  colunas_info_existentes,
+  
+  drop = FALSE
+  
+]
+
+
+linhas_excluidas_zero$linha_original <-
+  which(indice_excluidas_zero)
+
+
+linhas_excluidas_zero$motivo_exclusao <-
+  "Abundancia zero em todos os inventarios mantidos"
+
+
+
+# ============================================================
+# 20. CRIAR MATRIZ DE ABUNDÂNCIA 1 FINAL
+# ============================================================
+#
+# Mantemos somente as linhas que ainda possuem pelo menos
+# um indivíduo nos inventários mantidos.
+#
+#
+# IMPORTANTE:
+#
+# NÃO agrupamos por espécie.
+#
+# NÃO somamos duplicatas.
+#
+# NÃO corrigimos nomes botânicos.
+#
+# NÃO alteramos família ou gênero.
+#
+# ============================================================
+
+abundancia1 <- abundancia1_pre[
+  
+  abundancia_total_linha > 0,
+  
+  ,
+  
+  drop = FALSE
+  
+]
+
+
+
+# ============================================================
+# 21. DIAGNÓSTICO DAS LINHAS
+# ============================================================
+
+cat(
+  "\n============================================\n",
+  "DIAGNÓSTICO DAS ESPÉCIES/LINHAS\n",
+  "============================================\n",
+  sep = ""
+)
+
+
+cat(
+  "Linhas na abundância original:",
+  nrow(abundancia),
+  "\n"
+)
+
+
+cat(
+  "Linhas que ficaram com abundância zero:",
+  nrow(linhas_excluidas_zero),
+  "\n"
+)
+
+
+cat(
+  "Linhas mantidas na Matriz_abundancia_1:",
+  nrow(abundancia1),
+  "\n"
+)
+
+
+
+# ============================================================
+# 22. VERIFICAR SE TODAS AS LINHAS FINAIS POSSUEM
+# PELO MENOS UMA ABUNDÂNCIA > 0
+# ============================================================
+
+soma_final <- rowSums(
+  
+  abundancia1[
+    ,
+    inventarios_mantidos,
+    drop = FALSE
+  ],
+  
+  na.rm = TRUE
+  
+)
+
+
+if (any(soma_final == 0)) {
+  
+  stop(
+    "ERRO: ainda existem linhas com abundância total igual a zero."
+  )
+  
+}
+
+
+cat(
+  "\nOK: todas as linhas finais possuem abundância > 0 ",
+  "em pelo menos um inventário.\n",
+  sep = ""
+)
+
+
+
+# ============================================================
+# 23. VERIFICAR SE INVENTÁRIOS EXCLUÍDOS PERMANECERAM
+# ============================================================
+
+extras_ainda_presentes <- intersect(
+  extras_na_abundancia,
+  names(abundancia1)
+)
+
+
+if (length(extras_ainda_presentes) > 0) {
+  
+  stop(
+    paste0(
+      "ERRO: inventários excluídos ainda permanecem na matriz: ",
+      paste(
+        extras_ainda_presentes,
+        collapse = ", "
+      )
+    )
+  )
+  
+}
+
+
+cat(
+  "OK: nenhum inventário excluído permaneceu na matriz.\n"
+)
+
+
+
+# ============================================================
+# 24. VERIFICAR ORDEM DOS INVENTÁRIOS
+# ============================================================
+
+inventarios_abundancia1 <- grep(
+  "^t[0-9]+$",
+  names(abundancia1),
+  value = TRUE,
+  ignore.case = TRUE
+)
+
+
+ordem_correta <- identical(
+  inventarios_abundancia1,
+  inventarios_mantidos
+)
+
+
+if (ordem_correta) {
+  
+  cat(
+    "OK: os inventários estão na mesma ordem da ocorrência 3.\n"
+  )
+  
+} else {
+  
+  warning(
+    "A ordem dos inventários precisa ser conferida."
+  )
+  
+}
+
+
+
+# ============================================================
+# 25. CRIAR RESUMO DO PROCESSAMENTO
+# ============================================================
+
+resumo <- data.frame(
+  
+  item = c(
+    "Inventários na ocorrência 3",
+    "Inventários na abundância original",
+    "Inventários mantidos",
+    "Inventários retirados",
+    "Inventários da ocorrência ausentes na abundância",
+    "Linhas na abundância original",
+    "Linhas excluídas por abundância zero",
+    "Linhas mantidas na Matriz_abundancia_1"
+  ),
+  
+  
+  valor = c(
+    length(inventarios_ocorrencia3),
+    length(inventarios_abundancia),
+    length(inventarios_mantidos),
+    length(extras_na_abundancia),
+    length(faltando_na_abundancia),
+    nrow(abundancia),
+    nrow(linhas_excluidas_zero),
+    nrow(abundancia1)
+  ),
+  
+  stringsAsFactors = FALSE
+  
+)
+
+
+
+# ============================================================
+# 26. TABELA DOS INVENTÁRIOS RETIRADOS
+# ============================================================
+
+diagnostico_inventarios_retirados <- data.frame(
+  
+  ponto = extras_na_abundancia,
+  
+  motivo = rep(
+    "Inventario nao presente na Matriz_original_ocorrencia_3",
+    length(extras_na_abundancia)
+  ),
+  
+  stringsAsFactors = FALSE
+  
+)
+
+
+
+# ============================================================
+# 27. TABELA DOS INVENTÁRIOS MANTIDOS
+# ============================================================
+
+diagnostico_inventarios_mantidos <- data.frame(
+  
+  ponto = inventarios_mantidos,
+  
+  status = rep(
+    "MANTIDO",
+    length(inventarios_mantidos)
+  ),
+  
+  stringsAsFactors = FALSE
+  
+)
+
+
+
+# ============================================================
+# 28. TABELA DOS INVENTÁRIOS AUSENTES
+# ============================================================
+
+diagnostico_inventarios_ausentes <- data.frame(
+  
+  ponto = faltando_na_abundancia,
+  
+  motivo = rep(
+    "Presente na ocorrencia 3, mas ausente na abundancia original",
+    length(faltando_na_abundancia)
+  ),
+  
+  stringsAsFactors = FALSE
+  
+)
+
+# ============================================================
+# 29. SALVAR MATRIZ DE ABUNDÂNCIA 1
+# ============================================================
+
+write.csv(
+  abundancia1,
+  arquivo_abundancia1,
+  row.names = FALSE,
+  fileEncoding = "UTF-8"
+)
+
+
+
+# ============================================================
+# 30. CRIAR EXCEL DE DIAGNÓSTICO
+# ============================================================
+
+wb <- createWorkbook()
+
+
+
+# ------------------------------------------------------------
+# ABA 1 - RESUMO
+# ------------------------------------------------------------
+
+addWorksheet(
+  wb,
+  "resumo"
+)
+
+
+writeData(
+  wb,
+  "resumo",
+  resumo
+)
+
+
+
+# ------------------------------------------------------------
+# ABA 2 - INVENTÁRIOS MANTIDOS
+# ------------------------------------------------------------
+
+addWorksheet(
+  wb,
+  "inventarios_mantidos"
+)
+
+
+writeData(
+  wb,
+  "inventarios_mantidos",
+  diagnostico_inventarios_mantidos
+)
+
+
+
+# ------------------------------------------------------------
+# ABA 3 - INVENTÁRIOS RETIRADOS
+# ------------------------------------------------------------
+
+addWorksheet(
+  wb,
+  "inventarios_retirados"
+)
+
+
+writeData(
+  wb,
+  "inventarios_retirados",
+  diagnostico_inventarios_retirados
+)
+
+
+
+# ------------------------------------------------------------
+# ABA 4 - INVENTÁRIOS AUSENTES
+# ------------------------------------------------------------
+
+addWorksheet(
+  wb,
+  "inventarios_ausentes"
+)
+
+
+writeData(
+  wb,
+  "inventarios_ausentes",
+  diagnostico_inventarios_ausentes
+)
+
+
+
+# ------------------------------------------------------------
+# ABA 5 - LINHAS EXCLUÍDAS
+# ------------------------------------------------------------
+
+addWorksheet(
+  wb,
+  "linhas_excluidas_zero"
+)
+
+
+writeData(
+  wb,
+  "linhas_excluidas_zero",
+  linhas_excluidas_zero
+)
+
+
+
+# ============================================================
+# 31. FORMATAR EXCEL
+# ============================================================
+
+abas <- names(wb)
+
+
+for (aba in abas) {
+  
+  freezePane(
+    wb,
+    aba,
+    firstRow = TRUE
+  )
+  
+  
+  dados_aba <- readWorkbook(
+    wb,
+    sheet = aba
+  )
+  
+  
+  if (ncol(dados_aba) > 0) {
+    
+    setColWidths(
+      wb,
+      aba,
+      cols = 1:ncol(dados_aba),
+      widths = "auto"
+    )
+    
+  }
+  
+}
+
+
+
+# ============================================================
+# 32. SALVAR DIAGNÓSTICO
+# ============================================================
+
+saveWorkbook(
+  wb,
+  arquivo_diagnostico,
+  overwrite = TRUE
+)
+
+
+
+# ============================================================
+# 33. RESULTADO FINAL
+# ============================================================
+
+cat(
+  "\n\n============================================\n",
+  "MATRIZ DE ABUNDÂNCIA 1 CRIADA\n",
+  "============================================\n",
+  sep = ""
+)
+
+
+cat(
+  "\nInventários na ocorrência 3:",
+  length(inventarios_ocorrencia3),
+  "\n"
+)
+
+
+cat(
+  "Inventários na abundância original:",
+  length(inventarios_abundancia),
+  "\n"
+)
+
+
+cat(
+  "Inventários mantidos:",
+  length(inventarios_mantidos),
+  "\n"
+)
+
+
+cat(
+  "Inventários retirados:",
+  length(extras_na_abundancia),
+  "\n"
+)
+
+
+cat(
+  "Inventários da ocorrência ausentes na abundância:",
+  length(faltando_na_abundancia),
+  "\n"
+)
+
+
+cat(
+  "\nLinhas na abundância original:",
+  nrow(abundancia),
+  "\n"
+)
+
+
+cat(
+  "Linhas excluídas por abundância zero:",
+  nrow(linhas_excluidas_zero),
+  "\n"
+)
+
+
+cat(
+  "Linhas finais:",
+  nrow(abundancia1),
+  "\n"
+)
+
+
+cat(
+  "\nMatriz salva em:\n",
+  arquivo_abundancia1,
+  "\n"
+)
+
+
+cat(
+  "\nDiagnóstico salvo em:\n",
+  arquivo_diagnostico,
+  "\n"
+)
+
+
+cat(
+  "============================================\n"
+)
+
+
+
+# ============================================================
+# 34. MOSTRAR RESUMO NO CONSOLE
+# ============================================================
+
+cat(
+  "\nRESUMO:\n\n"
+)
+
+
+print(
+  resumo
+)
