@@ -1,0 +1,1068 @@
+# ============================================================
+# ESPÉCIES MANEJADAS PRESENTES NA MATRIZ DE OCORRÊNCIA 3
+#
+# Bases:
+# - Gustavo
+# - Mansfeld
+# - WorldCuP
+#
+# Comparação:
+#
+# nome_aceito_final das listas
+#           X
+# nome_aceito da Matriz_original_ocorrencia_3.csv
+#
+# REGRAS:
+#
+# 1. Comparação no nível de ESPÉCIE
+# 2. Autoria não será considerada
+# 3. Subespécies não serão consideradas separadamente
+# 4. Variedades não serão consideradas separadamente
+# 5. Formas não serão consideradas separadamente
+# 6. Híbridos serão preservados
+#
+# Exemplo:
+#
+# Manihot esculenta Crantz
+# -> Manihot esculenta
+#
+# Manihot esculenta subsp. flabellifolia (...)
+# -> Manihot esculenta
+#
+# Manihot esculenta var. alguma (...)
+# -> Manihot esculenta
+#
+# Abelia ×grandiflora (...)
+# -> Abelia ×grandiflora
+#
+# ============================================================
+
+
+# ============================================================
+# 1. PACOTES
+# ============================================================
+
+library(readxl)
+library(readr)
+library(dplyr)
+library(stringr)
+library(writexl)
+
+
+# ============================================================
+# 2. CAMINHOS
+# ============================================================
+
+pasta_manejo <- paste0(
+  "C:/Users/giuli/OneDrive/Documentos/",
+  "Caapora/ssp_manejo"
+)
+
+
+pasta_ocorrencia <- paste0(
+  "C:/Users/giuli/OneDrive/Documentos/",
+  "Caapora/Matrizes_ocorrência"
+)
+
+
+arquivo_gustavo <- file.path(
+  pasta_manejo,
+  "ssp_gustavo_conferencia_botanica.xlsx"
+)
+
+
+arquivo_mansfeld <- file.path(
+  pasta_manejo,
+  "ssp_mansfeld_conferencia_botanica.xlsx"
+)
+
+
+arquivo_worldcup <- file.path(
+  pasta_manejo,
+  "ssp_worldcup_conferencia_botanica.xlsx"
+)
+
+
+arquivo_ocorrencia <- file.path(
+  pasta_ocorrencia,
+  "Matriz_original_ocorrencia_3.csv"
+)
+
+
+# ============================================================
+# 3. LER AS TRÊS BASES DE ESPÉCIES MANEJADAS
+# ============================================================
+
+gustavo <- read_excel(
+  arquivo_gustavo,
+  sheet = "conferencia_final"
+)
+
+
+mansfeld <- read_excel(
+  arquivo_mansfeld,
+  sheet = "conferencia_final"
+)
+
+
+worldcup <- read_excel(
+  arquivo_worldcup,
+  sheet = "conferencia_final"
+)
+
+
+# ============================================================
+# 4. CONFERIR ESTRUTURA DAS BASES
+# ============================================================
+
+cat("\n============================================\n")
+cat("BASES DE ESPÉCIES MANEJADAS\n")
+cat("============================================\n\n")
+
+
+cat(
+  "Gustavo - registros:",
+  nrow(gustavo),
+  "\n"
+)
+
+
+cat(
+  "Mansfeld - registros:",
+  nrow(mansfeld),
+  "\n"
+)
+
+
+cat(
+  "WorldCuP - registros:",
+  nrow(worldcup),
+  "\n"
+)
+
+
+# ============================================================
+# 5. CONFERIR SE nome_aceito_final EXISTE
+# ============================================================
+
+if (!"nome_aceito_final" %in% names(gustavo)) {
+  
+  stop(
+    "ERRO: Gustavo não possui a coluna nome_aceito_final."
+  )
+  
+}
+
+
+if (!"nome_aceito_final" %in% names(mansfeld)) {
+  
+  stop(
+    "ERRO: Mansfeld não possui a coluna nome_aceito_final."
+  )
+  
+}
+
+
+if (!"nome_aceito_final" %in% names(worldcup)) {
+  
+  stop(
+    "ERRO: WorldCuP não possui a coluna nome_aceito_final."
+  )
+  
+}
+
+
+cat("\nColuna nome_aceito_final encontrada nas três bases.\n")
+
+
+# ============================================================
+# 6. EXTRAIR SOMENTE nome_aceito_final
+# ============================================================
+
+lista_gustavo <- gustavo %>%
+  
+  transmute(
+    
+    base = "Gustavo",
+    
+    nome_aceito_final =
+      as.character(
+        nome_aceito_final
+      )
+    
+  )
+
+
+lista_mansfeld <- mansfeld %>%
+  
+  transmute(
+    
+    base = "Mansfeld",
+    
+    nome_aceito_final =
+      as.character(
+        nome_aceito_final
+      )
+    
+  )
+
+
+lista_worldcup <- worldcup %>%
+  
+  transmute(
+    
+    base = "WorldCuP",
+    
+    nome_aceito_final =
+      as.character(
+        nome_aceito_final
+      )
+    
+  )
+
+
+# ============================================================
+# 7. JUNTAR AS TRÊS BASES
+# ============================================================
+
+especies_manejadas <- bind_rows(
+  lista_gustavo,
+  lista_mansfeld,
+  lista_worldcup
+)
+
+
+# Remover valores ausentes ou vazios
+
+especies_manejadas <- especies_manejadas %>%
+  
+  filter(
+    !is.na(nome_aceito_final),
+    trimws(nome_aceito_final) != ""
+  )
+
+
+cat("\n============================================\n")
+cat("REGISTROS COM NOME ACEITO\n")
+cat("============================================\n\n")
+
+
+print(
+  especies_manejadas %>%
+    count(
+      base,
+      name = "n_registros"
+    )
+)
+
+
+# ============================================================
+# 8. FUNÇÃO PARA REDUZIR O NOME AO NÍVEL DE ESPÉCIE
+# ============================================================
+#
+# A função mantém somente:
+#
+# Gênero + epíteto específico
+#
+# Exemplos:
+#
+# Manihot esculenta Crantz
+# -> Manihot esculenta
+#
+# Manihot esculenta var. alguma (...)
+# -> Manihot esculenta
+#
+# Manihot esculenta subsp. alguma (...)
+# -> Manihot esculenta
+#
+# Abelia ×grandiflora (...)
+# -> Abelia ×grandiflora
+#
+# Abelia × grandiflora (...)
+# -> Abelia ×grandiflora
+#
+# ============================================================
+
+extrair_especie <- function(x) {
+  
+  x <- as.character(x)
+  
+  
+  resultado <- sapply(
+    
+    x,
+    
+    function(nome) {
+      
+      # ------------------------------------------------------
+      # Ausentes
+      # ------------------------------------------------------
+      
+      if (
+        is.na(nome) ||
+          trimws(nome) == ""
+      ) {
+        
+        return(
+          NA_character_
+        )
+        
+      }
+      
+      
+      # ------------------------------------------------------
+      # Corrigir espaços
+      # ------------------------------------------------------
+      
+      nome <- trimws(nome)
+      
+      nome <- gsub(
+        "\\s+",
+        " ",
+        nome
+      )
+      
+      
+      # ------------------------------------------------------
+      # Separar palavras
+      # ------------------------------------------------------
+      
+      partes <- strsplit(
+        nome,
+        "\\s+"
+      )[[1]]
+      
+      
+      # ------------------------------------------------------
+      # Precisamos de pelo menos gênero + espécie
+      # ------------------------------------------------------
+      
+      if (
+        length(partes) < 2
+      ) {
+        
+        return(
+          NA_character_
+        )
+        
+      }
+      
+      
+      # ------------------------------------------------------
+      # Híbrido com × separado
+      #
+      # Abelia × grandiflora
+      #
+      # -> Abelia ×grandiflora
+      # ------------------------------------------------------
+      
+      if (
+        length(partes) >= 3 &&
+          partes[2] == "×"
+      ) {
+        
+        return(
+          paste0(
+            partes[1],
+            " ×",
+            partes[3]
+          )
+        )
+        
+      }
+      
+      
+      # ------------------------------------------------------
+      # Nome normal ou híbrido com × junto ao epíteto
+      #
+      # Manihot esculenta
+      #
+      # Abelia ×grandiflora
+      # ------------------------------------------------------
+      
+      return(
+        paste(
+          partes[1],
+          partes[2]
+        )
+      )
+      
+    }
+    
+  )
+  
+  
+  unname(
+    resultado
+  )
+  
+}
+
+
+# ============================================================
+# 9. GERAR NOME NO NÍVEL DE ESPÉCIE
+# ============================================================
+
+especies_manejadas$nome_especie <-
+  extrair_especie(
+    especies_manejadas$nome_aceito_final
+  )
+
+
+# ============================================================
+# 10. CONFERIR ALGUNS NOMES
+# ============================================================
+
+cat("\n============================================\n")
+cat("EXEMPLOS DA REDUÇÃO PARA ESPÉCIE\n")
+cat("============================================\n\n")
+
+
+print(
+  head(
+    especies_manejadas[
+      ,
+      c(
+        "base",
+        "nome_aceito_final",
+        "nome_especie"
+      )
+    ],
+    30
+  )
+)
+
+
+# ============================================================
+# 11. REMOVER NOMES QUE NÃO PUDERAM SER INTERPRETADOS
+# ============================================================
+
+nomes_nao_interpretados <- especies_manejadas %>%
+  
+  filter(
+    is.na(nome_especie) |
+      nome_especie == ""
+  )
+
+
+cat("\n============================================\n")
+cat("NOMES NÃO INTERPRETADOS\n")
+cat("============================================\n\n")
+
+
+cat(
+  "Número de registros:",
+  nrow(nomes_nao_interpretados),
+  "\n"
+)
+
+
+if (
+  nrow(nomes_nao_interpretados) > 0
+) {
+  
+  print(
+    nomes_nao_interpretados
+  )
+  
+}
+
+
+especies_manejadas <- especies_manejadas %>%
+  
+  filter(
+    !is.na(nome_especie),
+    nome_especie != ""
+  )
+
+
+# ============================================================
+# 12. REMOVER DUPLICATAS DENTRO DE CADA BASE
+# ============================================================
+#
+# Exemplo:
+#
+# Espécie A
+# Espécie A var. X
+# Espécie A subsp. Y
+#
+# passam a representar somente:
+#
+# Espécie A
+#
+# dentro daquela base.
+#
+# ============================================================
+
+especies_manejadas <- especies_manejadas %>%
+  
+  distinct(
+    base,
+    nome_especie,
+    .keep_all = TRUE
+  )
+
+
+cat("\n============================================\n")
+cat("ESPÉCIES ÚNICAS POR BASE\n")
+cat("============================================\n\n")
+
+
+print(
+  especies_manejadas %>%
+    
+    count(
+      base,
+      name = "total_especies"
+    )
+)
+
+
+# ============================================================
+# 13. LER MATRIZ DE OCORRÊNCIA 3
+# ============================================================
+#
+# IMPORTANTE:
+#
+# O diagnóstico mostrou que esta matriz usa:
+#
+# separador = ,
+# codificação = UTF-8
+#
+# ============================================================
+
+matriz <- read_delim(
+  
+  arquivo_ocorrencia,
+  
+  delim = ",",
+  
+  locale = locale(
+    encoding = "UTF-8"
+  ),
+  
+  show_col_types = FALSE
+  
+)
+
+
+# ============================================================
+# 14. CONFERIR ESTRUTURA DA MATRIZ
+# ============================================================
+
+cat("\n============================================\n")
+cat("MATRIZ DE OCORRÊNCIA 3\n")
+cat("============================================\n\n")
+
+
+cat(
+  "Número de linhas:",
+  nrow(matriz),
+  "\n"
+)
+
+
+cat(
+  "Número de colunas:",
+  ncol(matriz),
+  "\n"
+)
+
+
+cat(
+  "Coluna nome_aceito presente:",
+  "nome_aceito" %in% names(matriz),
+  "\n"
+)
+
+
+cat(
+  "\nPrimeiras 10 colunas:\n"
+)
+
+
+print(
+  names(matriz)[1:min(10, ncol(matriz))]
+)
+
+
+# ============================================================
+# 15. PARAR SE nome_aceito NÃO EXISTIR
+# ============================================================
+
+if (
+  !"nome_aceito" %in% names(matriz)
+) {
+  
+  stop(
+    paste0(
+      "ERRO: a matriz foi lida, mas a coluna ",
+      "'nome_aceito' não foi encontrada."
+    )
+  )
+  
+}
+
+
+# ============================================================
+# 16. MOSTRAR PRIMEIROS NOMES DA MATRIZ
+# ============================================================
+
+cat("\n============================================\n")
+cat("PRIMEIROS NOMES DA MATRIZ\n")
+cat("============================================\n\n")
+
+
+print(
+  head(
+    matriz$nome_aceito,
+    30
+  )
+)
+
+
+# ============================================================
+# 17. PREPARAR NOMES DA MATRIZ
+# ============================================================
+#
+# A matriz já está no nível de espécie:
+#
+# Abarema acreana
+# Abarema cochliacarpos
+# Abatia americana
+# Abelia ×grandiflora
+#
+# Criamos apenas uma chave auxiliar para evitar diferenças
+# de maiúsculas/minúsculas e espaços.
+#
+# ============================================================
+
+matriz_nomes <- matriz %>%
+  
+  transmute(
+    
+    nome_aceito_matriz =
+      as.character(
+        nome_aceito
+      ),
+    
+    chave =
+      str_to_lower(
+        str_squish(
+          as.character(
+            nome_aceito
+          )
+        )
+      )
+    
+  ) %>%
+  
+  filter(
+    !is.na(chave),
+    chave != ""
+  ) %>%
+  
+  distinct(
+    chave,
+    .keep_all = TRUE
+  )
+
+
+cat("\n============================================\n")
+cat("NOMES ÚNICOS NA MATRIZ\n")
+cat("============================================\n\n")
+
+
+cat(
+  "Total:",
+  nrow(matriz_nomes),
+  "\n"
+)
+
+
+# ============================================================
+# 18. CRIAR CHAVE DAS ESPÉCIES MANEJADAS
+# ============================================================
+
+especies_manejadas <- especies_manejadas %>%
+  
+  mutate(
+    
+    chave =
+      str_to_lower(
+        str_squish(
+          nome_especie
+        )
+      )
+    
+  )
+
+
+# ============================================================
+# 19. COMPARAR ESPÉCIES MANEJADAS COM A MATRIZ
+# ============================================================
+
+resultado <- especies_manejadas %>%
+  
+  left_join(
+    matriz_nomes,
+    by = "chave"
+  ) %>%
+  
+  mutate(
+    
+    encontrada_matriz =
+      !is.na(
+        nome_aceito_matriz
+      )
+    
+  )
+
+
+# ============================================================
+# 20. RESUMO POR BASE
+# ============================================================
+
+resumo_por_base <- resultado %>%
+  
+  group_by(
+    base
+  ) %>%
+  
+  summarise(
+    
+    total_especies =
+      n(),
+    
+    encontradas_matriz =
+      sum(
+        encontrada_matriz
+      ),
+    
+    nao_encontradas =
+      sum(
+        !encontrada_matriz
+      ),
+    
+    percentual_encontrado =
+      round(
+        
+        100 *
+          encontradas_matriz /
+          total_especies,
+        
+        2
+        
+      ),
+    
+    .groups = "drop"
+    
+  )
+
+
+cat("\n============================================\n")
+cat("RESULTADO POR BASE\n")
+cat("============================================\n\n")
+
+
+print(
+  resumo_por_base
+)
+
+
+# ============================================================
+# 21. CRIAR LISTA ÚNICA DAS TRÊS BASES
+# ============================================================
+#
+# Se uma espécie estiver:
+#
+# Gustavo
+# Mansfeld
+# WorldCuP
+#
+# ela será contada somente uma vez no resultado geral.
+#
+# A coluna "bases" mostrará em quais listas ela ocorre.
+#
+# ============================================================
+
+especies_unicas <- resultado %>%
+  
+  group_by(
+    chave,
+    nome_especie
+  ) %>%
+  
+  summarise(
+    
+    bases =
+      paste(
+        sort(
+          unique(
+            base
+          )
+        ),
+        collapse = "; "
+      ),
+    
+    encontrada_matriz =
+      any(
+        encontrada_matriz
+      ),
+    
+    nome_aceito_matriz = {
+      
+      valores <- nome_aceito_matriz[
+        !is.na(nome_aceito_matriz)
+      ]
+      
+      if (
+        length(valores) == 0
+      ) {
+        
+        NA_character_
+        
+      } else {
+        
+        valores[1]
+        
+      }
+      
+    },
+    
+    .groups = "drop"
+    
+  )
+
+
+# ============================================================
+# 22. RESULTADO GERAL
+# ============================================================
+
+total_unicas <-
+  nrow(
+    especies_unicas
+  )
+
+
+total_encontradas <-
+  sum(
+    especies_unicas$encontrada_matriz
+  )
+
+
+total_nao_encontradas <-
+  sum(
+    !especies_unicas$encontrada_matriz
+  )
+
+
+percentual_geral <-
+  round(
+    
+    100 *
+      total_encontradas /
+      total_unicas,
+    
+    2
+    
+  )
+
+
+cat("\n============================================\n")
+cat("RESULTADO GERAL\n")
+cat("============================================\n\n")
+
+
+cat(
+  "Espécies únicas nas três bases:",
+  total_unicas,
+  "\n"
+)
+
+
+cat(
+  "Espécies encontradas na matriz:",
+  total_encontradas,
+  "\n"
+)
+
+
+cat(
+  "Espécies NÃO encontradas na matriz:",
+  total_nao_encontradas,
+  "\n"
+)
+
+
+cat(
+  "Percentual encontrado:",
+  percentual_geral,
+  "%\n"
+)
+
+
+# ============================================================
+# 23. TABELA DAS ESPÉCIES ENCONTRADAS
+# ============================================================
+
+especies_encontradas <- especies_unicas %>%
+  
+  filter(
+    encontrada_matriz
+  ) %>%
+  
+  arrange(
+    nome_especie
+  )
+
+
+# ============================================================
+# 24. TABELA DAS ESPÉCIES NÃO ENCONTRADAS
+# ============================================================
+
+especies_nao_encontradas <- especies_unicas %>%
+  
+  filter(
+    !encontrada_matriz
+  ) %>%
+  
+  arrange(
+    nome_especie
+  )
+
+
+# ============================================================
+# 25. RESULTADO DETALHADO POR BASE
+# ============================================================
+
+resultado_por_base <- resultado %>%
+  
+  select(
+    base,
+    nome_aceito_final,
+    nome_especie,
+    encontrada_matriz,
+    nome_aceito_matriz
+  ) %>%
+  
+  arrange(
+    base,
+    nome_especie
+  )
+
+
+# ============================================================
+# 26. RESUMO GERAL PARA O EXCEL
+# ============================================================
+
+resumo_geral <- data.frame(
+  
+  categoria = c(
+    "Espécies únicas nas três bases",
+    "Espécies encontradas na matriz",
+    "Espécies não encontradas na matriz",
+    "Percentual encontrado"
+  ),
+  
+  valor = c(
+    total_unicas,
+    total_encontradas,
+    total_nao_encontradas,
+    percentual_geral
+  )
+  
+)
+
+
+# ============================================================
+# 27. SALVAR RESULTADOS EM EXCEL
+# ============================================================
+
+arquivo_saida <- file.path(
+  pasta_manejo,
+  "especies_manejadas_na_matriz_ocorrencia_3.xlsx"
+)
+
+
+write_xlsx(
+  
+  list(
+    
+    resumo_geral =
+      resumo_geral,
+    
+    resumo_por_base =
+      resumo_por_base,
+    
+    especies_encontradas =
+      especies_encontradas,
+    
+    especies_nao_encontradas =
+      especies_nao_encontradas,
+    
+    resultado_por_base =
+      resultado_por_base,
+    
+    nomes_nao_interpretados =
+      nomes_nao_interpretados
+    
+  ),
+  
+  arquivo_saida
+  
+)
+
+
+# ============================================================
+# 28. MOSTRAR ALGUMAS ESPÉCIES ENCONTRADAS
+# ============================================================
+
+cat("\n============================================\n")
+cat("PRIMEIRAS ESPÉCIES ENCONTRADAS\n")
+cat("============================================\n\n")
+
+
+print(
+  head(
+    especies_encontradas,
+    30
+  )
+)
+
+
+# ============================================================
+# 29. MOSTRAR ALGUMAS ESPÉCIES NÃO ENCONTRADAS
+# ============================================================
+
+cat("\n============================================\n")
+cat("PRIMEIRAS ESPÉCIES NÃO ENCONTRADAS\n")
+cat("============================================\n\n")
+
+
+print(
+  head(
+    especies_nao_encontradas,
+    30
+  )
+)
+
+
+# ============================================================
+# 30. FINAL
+# ============================================================
+
+cat("\n============================================\n")
+cat("ARQUIVO SALVO\n")
+cat("============================================\n\n")
+
+
+cat(
+  arquivo_saida,
+  "\n"
+)
+
+
+cat("\n============================================\n")
+cat("ANÁLISE FINALIZADA\n")
+cat("============================================\n")
