@@ -1,0 +1,1248 @@
+
+# ============================================================
+# PROJETO CAAPORA
+# HARMONIZACAO DA MATRIZ DE ABUNDANCIA
+# E CALCULO DA ABUNDANCIA RELATIVA
+#
+# REGRAS:
+#
+# 1. A classificacao da tabela botanica tem prioridade.
+#
+# 2. COMPLETAS:
+#    - usar nome_aceito da tabela botanica;
+#    - consolidar somente nomes aceitos confirmados;
+#    - somar abundancias por inventario.
+#
+# 3. INCOMPLETAS:
+#    - utilizar o genero conferido, quando disponivel;
+#    - preservar cada registro individualmente;
+#    - nunca consolidar, mesmo com nomes iguais.
+#
+# 4. INDETERMINADAS:
+#    - preservar cada registro individualmente;
+#    - nao exigir correspondencia botanica;
+#    - nunca consolidar.
+#
+# 5. SEM CORRESPONDENCIA:
+#    - manter na matriz;
+#    - registrar para revisao posterior;
+#    - nao interromper o calculo.
+#
+# 6. ABUNDANCIA RELATIVA:
+#    - incluir completas, incompletas e indeterminadas;
+#    - calcular por inventario;
+#    - conferir se a soma resulta em 100%.
+#
+# ============================================================
+
+
+# ============================================================
+# 0. PACOTES
+# ============================================================
+
+pacotes <- c(
+  "dplyr",
+  "readxl",
+  "stringr",
+  "openxlsx"
+)
+
+faltantes <- setdiff(
+  pacotes,
+  rownames(installed.packages())
+)
+
+if (length(faltantes) > 0) {
+  install.packages(faltantes)
+}
+
+invisible(
+  lapply(pacotes, library, character.only = TRUE)
+)
+
+
+# ============================================================
+# 1. CAMINHOS
+# ============================================================
+
+pasta_caapora <-
+  "C:/Users/giuli/OneDrive/Documentos/Caapora"
+
+pasta_abundancia <- file.path(
+  pasta_caapora,
+  "Matrizes_abundancia"
+)
+
+arquivo_matriz <- file.path(
+  pasta_abundancia,
+  "Matriz_abundancia_2.csv"
+)
+
+arquivo_taxonomia <- file.path(
+  pasta_caapora,
+  "taxonomia",
+  "tabela_botanica_final.xlsx"
+)
+
+arquivo_abundancia <- file.path(
+  pasta_abundancia,
+  "Matriz_abundancia_3.csv"
+)
+
+arquivo_relativa <- file.path(
+  pasta_abundancia,
+  "Matriz_abundancia_relativa.csv"
+)
+
+arquivo_diagnostico <- file.path(
+  pasta_abundancia,
+  "Diagnostico_abundancia.xlsx"
+)
+
+arquivo_relatorio <- file.path(
+  pasta_abundancia,
+  "Relatorio_abundancia_relativa.xlsx"
+)
+
+if (!file.exists(arquivo_matriz)) {
+  stop("Matriz de abundancia nao encontrada.")
+}
+
+if (!file.exists(arquivo_taxonomia)) {
+  stop("Tabela botanica final nao encontrada.")
+}
+
+
+# ============================================================
+# 2. FUNCOES AUXILIARES
+# ============================================================
+
+limpar <- function(x) {
+  
+  x <- as.character(x)
+  
+  x <- gsub("\ufeff", "", x, fixed = TRUE)
+  x <- gsub("\u00a0", " ", x, fixed = TRUE)
+  x <- gsub("\u200b", "", x, fixed = TRUE)
+  
+  x <- stringr::str_squish(x)
+  
+  x[x == ""] <- NA_character_
+  
+  x
+}
+
+
+chave_taxonomica <- function(x) {
+  
+  x <- limpar(x)
+  
+  x <- stringr::str_to_lower(x)
+  
+  x <- gsub(
+    "_",
+    " ",
+    x,
+    fixed = TRUE
+  )
+  
+  x <- stringr::str_squish(x)
+  
+  x
+}
+
+
+normalizar_identificacao <- function(x) {
+  
+  x <- chave_taxonomica(x)
+  
+  x[x %in% c(
+    "completo",
+    "completas",
+    "completos"
+  )] <- "completa"
+  
+  x[x %in% c(
+    "incompleto",
+    "incompletas",
+    "incompletos"
+  )] <- "incompleta"
+  
+  x[x %in% c(
+    "indet",
+    "indet.",
+    "indeterminado",
+    "indeterminadas",
+    "indeterminados"
+  )] <- "indeterminada"
+  
+  x
+}
+
+
+primeiro <- function(x) {
+  
+  x <- limpar(x)
+  
+  x <- x[!is.na(x)]
+  
+  if (length(x) == 0) {
+    return(NA_character_)
+  }
+  
+  x[1]
+}
+
+
+juntar_unicos <- function(x) {
+  
+  x <- limpar(x)
+  
+  x <- sort(unique(x[!is.na(x)]))
+  
+  if (length(x) == 0) {
+    return(NA_character_)
+  }
+  
+  paste(x, collapse = "; ")
+}
+
+
+consolidar_habitos <- function(x) {
+  
+  x <- limpar(x)
+  
+  x <- x[!is.na(x)]
+  
+  if (length(x) == 0) {
+    return(NA_character_)
+  }
+  
+  partes <- unlist(
+    stringr::str_split(x, ";")
+  )
+  
+  partes <- limpar(partes)
+  
+  partes <- sort(unique(
+    partes[!is.na(partes)]
+  ))
+  
+  if (length(partes) == 0) {
+    return(NA_character_)
+  }
+  
+  paste(partes, collapse = "; ")
+}
+
+
+# ============================================================
+# 3. LER MATRIZ DE ABUNDANCIA
+# ============================================================
+
+# Matriz_abundancia_2.csv foi exportada como CSV
+# com separador "," e decimal ".".
+
+matriz <- read.csv(
+  arquivo_matriz,
+  header = TRUE,
+  sep = ",",
+  dec = ".",
+  stringsAsFactors = FALSE,
+  check.names = FALSE,
+  fileEncoding = "UTF-8",
+  colClasses = "character"
+)
+
+names(matriz) <- limpar(names(matriz))
+
+obrigatorias <- c(
+  "especie",
+  "identificacao"
+)
+
+faltando <- setdiff(
+  obrigatorias,
+  names(matriz)
+)
+
+if (length(faltando) > 0) {
+  
+  stop(
+    "Colunas ausentes: ",
+    paste(faltando, collapse = ", ")
+  )
+}
+
+
+# ============================================================
+# 4. IDENTIFICAR INVENTARIOS
+# ============================================================
+
+inventarios <- grep(
+  "^t[0-9]+$",
+  names(matriz),
+  value = TRUE
+)
+
+if (length(inventarios) == 0) {
+  stop("Nenhum inventario encontrado.")
+}
+
+inventarios <- inventarios[
+  order(as.integer(
+    sub("^t", "", inventarios)
+  ))
+]
+
+cat(
+  "\nInventarios encontrados:",
+  length(inventarios),
+  "\n"
+)
+
+
+# ============================================================
+# 5. PRESERVAR IDENTIFICADORES ORIGINAIS
+# ============================================================
+
+matriz <- matriz %>%
+  mutate(
+    id_registro = row_number(),
+    
+    especie_original = especie,
+    
+    especie = limpar(especie),
+    
+    identificacao_original =
+      normalizar_identificacao(identificacao),
+    
+    chave = chave_taxonomica(especie)
+  )
+
+
+# ============================================================
+# 6. CONVERTER ABUNDANCIAS
+# ============================================================
+
+valores_originais <- matriz[
+  ,
+  inventarios,
+  drop = FALSE
+]
+
+for (i in inventarios) {
+  
+  valores <- limpar(matriz[[i]])
+  
+  matriz[[i]] <- suppressWarnings(
+    as.numeric(valores)
+  )
+}
+
+
+# ============================================================
+# 7. CONFERIR VALORES NUMERICOS
+# ============================================================
+
+erros_numericos <- dplyr::bind_rows(
+  lapply(inventarios, function(i) {
+    
+    original <- limpar(
+      valores_originais[[i]]
+    )
+    
+    ruim <- which(
+      !is.na(original) &
+        is.na(matriz[[i]])
+    )
+    
+    data.frame(
+      id_registro = matriz$id_registro[ruim],
+      inventario = rep(i, length(ruim)),
+      valor_original = original[ruim]
+    )
+  })
+)
+
+negativos <- dplyr::bind_rows(
+  lapply(inventarios, function(i) {
+    
+    ruim <- which(
+      !is.na(matriz[[i]]) &
+        matriz[[i]] < 0
+    )
+    
+    data.frame(
+      id_registro = matriz$id_registro[ruim],
+      inventario = rep(i, length(ruim)),
+      valor = matriz[[i]][ruim]
+    )
+  })
+)
+
+valores_na <- dplyr::bind_rows(
+  lapply(inventarios, function(i) {
+    
+    ruim <- which(
+      is.na(matriz[[i]])
+    )
+    
+    data.frame(
+      id_registro = matriz$id_registro[ruim],
+      inventario = rep(i, length(ruim))
+    )
+  })
+)
+
+if (
+  nrow(erros_numericos) > 0 ||
+    nrow(negativos) > 0 ||
+    nrow(valores_na) > 0
+) {
+  
+  openxlsx::write.xlsx(
+    list(
+      erros_numericos = erros_numericos,
+      negativos = negativos,
+      valores_na = valores_na
+    ),
+    arquivo_diagnostico,
+    overwrite = TRUE
+  )
+  
+  stop(
+    "Problemas nos valores de abundancia. ",
+    "Consulte Diagnostico_abundancia.xlsx."
+  )
+}
+
+
+# ============================================================
+# 8. SEPARAR LINHAS SEM ABUNDANCIA
+# ============================================================
+
+sem_abundancia <- rowSums(
+  as.matrix(matriz[inventarios])
+) == 0
+
+linhas_zeradas <- matriz[
+  sem_abundancia,
+  c(
+    "id_registro",
+    "especie_original",
+    "identificacao_original"
+  ),
+  drop = FALSE
+]
+
+ativos <- matriz[
+  !sem_abundancia,
+  ,
+  drop = FALSE
+]
+
+
+# ============================================================
+# 9. LER TABELA BOTANICA FINAL
+# ============================================================
+
+taxonomia <- as.data.frame(
+  readxl::read_excel(
+    arquivo_taxonomia,
+    sheet = "Tabela_final"
+  )
+)
+
+colunas_taxonomia <- c(
+  "especie_referencia",
+  "nome_aceito",
+  "identificacao",
+  "familia",
+  "genero",
+  "habito"
+)
+
+faltando_taxonomia <- setdiff(
+  colunas_taxonomia,
+  names(taxonomia)
+)
+
+if (length(faltando_taxonomia) > 0) {
+  
+  stop(
+    "Colunas ausentes na tabela botanica: ",
+    paste(
+      faltando_taxonomia,
+      collapse = ", "
+    )
+  )
+}
+
+taxonomia <- taxonomia %>%
+  mutate(
+    across(
+      all_of(colunas_taxonomia),
+      limpar
+    ),
+    
+    chave = chave_taxonomica(
+      especie_referencia
+    ),
+    
+    identificacao_bot =
+      normalizar_identificacao(
+        identificacao
+      )
+  )
+
+
+# ============================================================
+# 10. IDENTIFICAR CONFLITOS NA TABELA BOTANICA
+# ============================================================
+
+# Nao escolher arbitrariamente entre informacoes
+# conflitantes para a mesma chave.
+
+conflitos_taxonomia <- taxonomia %>%
+  filter(
+    !is.na(chave)
+  ) %>%
+  group_by(chave) %>%
+  summarise(
+    n_classes = n_distinct(
+      identificacao_bot,
+      na.rm = TRUE
+    ),
+    
+    n_nomes = n_distinct(
+      nome_aceito,
+      na.rm = TRUE
+    ),
+    
+    classes =
+      juntar_unicos(identificacao_bot),
+    
+    nomes_aceitos =
+      juntar_unicos(nome_aceito),
+    
+    .groups = "drop"
+  ) %>%
+  filter(
+    n_classes > 1 |
+      n_nomes > 1
+  )
+
+taxonomia_unica <- taxonomia %>%
+  filter(
+    !is.na(chave),
+    !chave %in%
+      conflitos_taxonomia$chave
+  ) %>%
+  distinct(
+    chave,
+    .keep_all = TRUE
+  ) %>%
+  select(
+    chave,
+    nome_aceito,
+    identificacao_bot,
+    familia,
+    genero,
+    habito
+  )
+
+
+# ============================================================
+# 11. CORRESPONDENCIA BOTANICA
+# ============================================================
+
+ativos <- ativos %>%
+  left_join(
+    taxonomia_unica,
+    by = "chave"
+  ) %>%
+  mutate(
+    correspondencia_botanica = ifelse(
+      !is.na(chave) &
+        chave %in% taxonomia_unica$chave,
+      "encontrada",
+      "nao_encontrada"
+    ),
+    
+    # REGRA CENTRAL:
+    # A classificacao botanica prevalece sobre
+    # a classificacao original da abundancia.
+    
+    identificacao_final = ifelse(
+      !is.na(identificacao_bot),
+      identificacao_bot,
+      identificacao_original
+    )
+  )
+
+
+# ============================================================
+# 12. CONFERIR RECLASSIFICACOES
+# ============================================================
+
+reclassificacoes <- ativos %>%
+  filter(
+    !is.na(identificacao_bot),
+    !is.na(identificacao_original),
+    identificacao_bot != identificacao_original
+  ) %>%
+  select(
+    id_registro,
+    especie_original,
+    identificacao_original,
+    identificacao_bot,
+    identificacao_final
+  )
+
+
+# ============================================================
+# 13. IDENTIFICAR CLASSIFICACOES INVALIDAS
+# ============================================================
+
+classes_validas <- c(
+  "completa",
+  "incompleta",
+  "indeterminada"
+)
+
+classes_invalidas <- ativos %>%
+  filter(
+    is.na(identificacao_final) |
+      !identificacao_final %in%
+      classes_validas
+  )
+
+if (nrow(classes_invalidas) > 0) {
+  
+  openxlsx::write.xlsx(
+    list(
+      classes_invalidas =
+        classes_invalidas
+    ),
+    arquivo_diagnostico,
+    overwrite = TRUE
+  )
+  
+  stop(
+    "Classificacoes de identificacao invalidas. ",
+    "Consulte Diagnostico_abundancia.xlsx."
+  )
+}
+
+
+# ============================================================
+# 14. DIAGNOSTICO DE NOMES SEM CORRESPONDENCIA
+# ============================================================
+
+# As indeterminadas nao precisam ter correspondencia.
+#
+# Registramos somente completas e incompletas
+# para revisao taxonomica.
+
+sem_correspondencia <- ativos %>%
+  filter(
+    correspondencia_botanica ==
+      "nao_encontrada",
+    
+    identificacao_final %in% c(
+      "completa",
+      "incompleta"
+    )
+  ) %>%
+  group_by(
+    especie,
+    identificacao_final
+  ) %>%
+  summarise(
+    n_registros = n(),
+    
+    abundancia_total = sum(
+      as.matrix(
+        pick(all_of(inventarios))
+      )
+    ),
+    
+    .groups = "drop"
+  ) %>%
+  arrange(
+    identificacao_final,
+    especie
+  )
+
+
+# ============================================================
+# 15. DEFINIR NOME FINAL
+# ============================================================
+
+# Completa:
+#   nome aceito, quando disponivel.
+#
+# Incompleta:
+#   genero da tabela botanica, quando disponivel.
+#
+# Indeterminada:
+#   nome original, sem inferencia taxonomica.
+#
+# Incompletas e indeterminadas nao sao consolidadas.
+
+ativos <- ativos %>%
+  mutate(
+    genero_final = case_when(
+      
+      identificacao_final == "incompleta" &
+        !is.na(genero) ~ genero,
+      
+      identificacao_final == "incompleta" ~
+        sub(
+          "[_[:space:]].*$",
+          "",
+          especie
+        ),
+      
+      TRUE ~ genero
+    ),
+    
+    nome_final = case_when(
+      
+      identificacao_final == "completa" &
+        !is.na(nome_aceito) ~
+        nome_aceito,
+      
+      identificacao_final == "incompleta" ~
+        genero_final,
+      
+      TRUE ~ especie
+    ),
+    
+    status_taxonomico = case_when(
+      
+      identificacao_final == "indeterminada" ~
+        "indeterminada_preservada",
+      
+      identificacao_final == "completa" &
+        correspondencia_botanica ==
+        "nao_encontrada" ~
+        "pendente_correspondencia",
+      
+      identificacao_final == "completa" &
+        is.na(nome_aceito) ~
+        "pendente_nome_aceito",
+      
+      identificacao_final == "incompleta" &
+        is.na(genero) ~
+        "pendente_genero",
+      
+      TRUE ~ "conferida"
+    )
+  )
+
+
+# ============================================================
+# 16. DIAGNOSTICO DE COMPLETAS SEM NOME ACEITO
+# ============================================================
+
+completas_sem_aceito <- ativos %>%
+  filter(
+    identificacao_final == "completa",
+    is.na(nome_aceito)
+  ) %>%
+  select(
+    id_registro,
+    especie_original,
+    nome_final,
+    status_taxonomico
+  )
+
+
+# ============================================================
+# 17. DIAGNOSTICO DE INCOMPLETAS SEM GENERO
+# ============================================================
+
+incompletas_sem_genero <- ativos %>%
+  filter(
+    identificacao_final == "incompleta",
+    is.na(genero)
+  ) %>%
+  select(
+    id_registro,
+    especie_original,
+    genero_final,
+    status_taxonomico
+  )
+
+
+# ============================================================
+# 18. SEPARAR COMPLETAS CONSOLIDAVEIS
+# ============================================================
+
+# Apenas registros com classificacao final
+# completa e nome aceito conferido.
+
+completas_conferidas <- ativos %>%
+  filter(
+    identificacao_final == "completa",
+    status_taxonomico == "conferida"
+  )
+
+# Todos os demais registros ficam individuais.
+
+nao_consolidadas <- ativos %>%
+  filter(
+    !(
+      identificacao_final == "completa" &
+        status_taxonomico == "conferida"
+    )
+  )
+
+
+# ============================================================
+# 19. DIAGNOSTICO DE DIVERGENCIAS DE HABITO
+# ============================================================
+
+separar_habitos <- function(x) {
+  x <- limpar(x)
+  x <- x[!is.na(x)]
+  if (length(x) == 0) return(character(0))
+  partes <- unlist(strsplit(x, ";", fixed = TRUE))
+  partes <- limpar(partes)
+  sort(unique(partes[!is.na(partes)]))
+}
+
+classificar_divergencia <- function(x) {
+  x <- unique(limpar(x))
+  x <- x[!is.na(x)]
+  if (length(x) <= 1) return("sem_divergencia")
+  
+  conjuntos <- lapply(x, separar_habitos)
+  todos <- sort(unique(unlist(conjuntos)))
+  
+  # Uma descricao ja contem a uniao de todas as demais.
+  if (any(vapply(conjuntos, function(h) setequal(h, todos), logical(1)))) {
+    return("compativeis_por_inclusao")
+  }
+  
+  # Pelo menos um habito compartilhado entre todas as descricoes.
+  comuns <- Reduce(intersect, conjuntos)
+  if (length(comuns) > 0) return("habitos_complementares")
+  
+  return("habitos_distintos")
+}
+
+conflitos_habito <- completas_conferidas %>%
+  filter(!is.na(habito)) %>%
+  group_by(nome_final) %>%
+  summarise(
+    n_habitos = n_distinct(habito),
+    habitos_originais = juntar_unicos(habito),
+    habito_consolidado = consolidar_habitos(habito),
+    tipo_divergencia = classificar_divergencia(habito),
+    especies_referencia = juntar_unicos(especie),
+    .groups = "drop"
+  ) %>%
+  filter(n_habitos > 1) %>%
+  arrange(tipo_divergencia, nome_final)
+
+
+# ============================================================
+# 20. CONSOLIDAR COMPLETAS
+# ============================================================
+
+completas_final <- completas_conferidas %>%
+  group_by(nome_final) %>%
+  summarise(
+    identificacao = "completa",
+    
+    familia = primeiro(familia),
+    
+    genero = primeiro(genero),
+    
+    habito = consolidar_habitos(habito),
+    
+    status_taxonomico = "conferida",
+    
+    id_registro = paste(
+      id_registro,
+      collapse = "; "
+    ),
+    
+    especie_original =
+      juntar_unicos(especie_original),
+    
+    especie_referencia =
+      juntar_unicos(especie),
+    
+    across(
+      all_of(inventarios),
+      ~ sum(.x)
+    ),
+    
+    .groups = "drop"
+  )
+
+
+# ============================================================
+# 21. PRESERVAR REGISTROS NAO CONSOLIDADOS
+# ============================================================
+
+# Cada registro permanece com seu id_registro.
+#
+# Mesmo que duas linhas tenham o mesmo nome_final,
+# suas abundancias nao sao somadas.
+
+outras_final <- nao_consolidadas %>%
+  transmute(
+    nome_final,
+    
+    identificacao =
+      identificacao_final,
+    
+    familia,
+    
+    genero = genero_final,
+    
+    habito = ifelse(
+      identificacao_final == "incompleta",
+      NA_character_,
+      habito
+    ),
+    
+    status_taxonomico,
+    
+    id_registro =
+      as.character(id_registro),
+    
+    especie_original,
+    
+    especie_referencia = especie,
+    
+    across(
+      all_of(inventarios)
+    )
+  )
+
+
+# ============================================================
+# 22. MONTAR MATRIZ DE ABUNDANCIA
+# ============================================================
+
+matriz_abundancia_final <- bind_rows(
+  completas_final,
+  outras_final
+) %>%
+  select(
+    nome_final,
+    identificacao,
+    familia,
+    genero,
+    habito,
+    status_taxonomico,
+    id_registro,
+    especie_original,
+    especie_referencia,
+    all_of(inventarios)
+  )
+
+
+# ============================================================
+# 22A. DIAGNOSTICO DE REGISTROS SEM HABITO
+# ============================================================
+
+sem_habito <- matriz_abundancia_final %>%
+  filter(is.na(habito) | trimws(habito) == "") %>%
+  select(
+    nome_final, identificacao, familia, genero,
+    especie_referencia, status_taxonomico, id_registro
+  ) %>%
+  arrange(identificacao, nome_final)
+
+cat("\nRegistros sem habito:", nrow(sem_habito), "\n")
+
+
+# ============================================================
+# 23. CONFERIR PRESERVACAO DAS ABUNDANCIAS
+# ============================================================
+
+abundancia_antes <- colSums(
+  ativos[inventarios]
+)
+
+abundancia_depois <- colSums(
+  matriz_abundancia_final[inventarios]
+)
+
+checagem_abundancia <- data.frame(
+  inventario = inventarios,
+  
+  abundancia_original =
+    as.numeric(abundancia_antes),
+  
+  abundancia_harmonizada =
+    as.numeric(abundancia_depois),
+  
+  diferenca = as.numeric(
+    abundancia_depois -
+      abundancia_antes
+  )
+)
+
+tolerancia <- 1e-9 * pmax(
+  1,
+  abs(
+    checagem_abundancia$abundancia_original
+  )
+)
+
+if (any(
+  abs(checagem_abundancia$diferenca) >
+    tolerancia
+)) {
+  
+  stop(
+    "ERRO: as abundancias foram alteradas."
+  )
+}
+
+
+# ============================================================
+# 24. CALCULAR ABUNDANCIA RELATIVA
+# ============================================================
+
+matriz_relativa <- matriz_abundancia_final
+
+totais <- colSums(
+  matriz_abundancia_final[inventarios]
+)
+
+for (i in inventarios) {
+  
+  if (totais[[i]] > 0) {
+    
+    matriz_relativa[[i]] <-
+      matriz_abundancia_final[[i]] /
+      totais[[i]] * 100
+    
+  } else {
+    
+    matriz_relativa[[i]] <- NA_real_
+  }
+}
+
+
+# ============================================================
+# 25. CONFERIR SOMA DAS ABUNDANCIAS RELATIVAS
+# ============================================================
+
+somas_relativas <- colSums(
+  matriz_relativa[inventarios],
+  na.rm = TRUE
+)
+
+checagem_relativa <- data.frame(
+  inventario = inventarios,
+  
+  abundancia_total =
+    as.numeric(totais),
+  
+  soma_relativa =
+    as.numeric(somas_relativas)
+)
+
+checagem_relativa$status <- ifelse(
+  checagem_relativa$abundancia_total == 0,
+  "sem_abundancia",
+  ifelse(
+    abs(
+      checagem_relativa$soma_relativa - 100
+    ) < 1e-8,
+    "OK",
+    "VERIFICAR"
+  )
+)
+
+if (any(
+  checagem_relativa$status == "VERIFICAR"
+)) {
+  
+  stop(
+    "ERRO: algum inventario nao soma 100%."
+  )
+}
+
+
+# ============================================================
+# 26. RESUMO DAS IDENTIFICACOES
+# ============================================================
+
+resumo_identificacoes <- matriz_abundancia_final %>%
+  count(
+    identificacao,
+    status_taxonomico,
+    name = "numero_linhas"
+  )
+
+
+# ============================================================
+# 27. RESUMO GERAL
+# ============================================================
+
+resumo <- data.frame(
+  indicador = c(
+    "Linhas originais",
+    "Linhas sem abundancia",
+    "Linhas ativas",
+    "Completas antes da consolidacao",
+    "Linhas completas apos consolidacao",
+    "Linhas nao consolidadas",
+    "Linhas finais",
+    "Inventarios",
+    "Nomes sem correspondencia",
+    "Completas sem nome aceito",
+    "Incompletas sem genero conferido",
+    "Reclassificacoes",
+    "Divergencias de habito",
+    "Registros sem habito"
+  ),
+  
+  valor = c(
+    nrow(matriz),
+    nrow(linhas_zeradas),
+    nrow(ativos),
+    nrow(completas_conferidas),
+    nrow(completas_final),
+    nrow(nao_consolidadas),
+    nrow(matriz_abundancia_final),
+    length(inventarios),
+    nrow(sem_correspondencia),
+    nrow(completas_sem_aceito),
+    nrow(incompletas_sem_genero),
+    nrow(reclassificacoes),
+    nrow(conflitos_habito),
+    nrow(sem_habito)
+  )
+)
+
+
+# ============================================================
+# 28. SALVAR DIAGNOSTICO
+# ============================================================
+
+openxlsx::write.xlsx(
+  list(
+    sem_correspondencia =
+      sem_correspondencia,
+    
+    completas_sem_aceito =
+      completas_sem_aceito,
+    
+    incompletas_sem_genero =
+      incompletas_sem_genero,
+    
+    reclassificacoes =
+      reclassificacoes,
+    
+    conflitos_taxonomia =
+      conflitos_taxonomia,
+    
+    conflitos_habito =
+      conflitos_habito,
+    
+    sem_habito =
+      sem_habito,
+    
+    linhas_zeradas =
+      linhas_zeradas
+  ),
+  
+  arquivo_diagnostico,
+  overwrite = TRUE
+)
+
+
+# ============================================================
+# 29. SALVAR RELATORIO
+# ============================================================
+
+openxlsx::write.xlsx(
+  list(
+    resumo = resumo,
+    
+    resumo_identificacoes =
+      resumo_identificacoes,
+    
+    checagem_abundancia =
+      checagem_abundancia,
+    
+    checagem_relativa =
+      checagem_relativa
+  ),
+  
+  arquivo_relatorio,
+  overwrite = TRUE
+)
+
+
+# ============================================================
+# 30. EXPORTAR MATRIZES
+# ============================================================
+
+write.csv(
+  matriz_abundancia_final,
+  arquivo_abundancia,
+  row.names = FALSE,
+  na = "",
+  fileEncoding = "UTF-8"
+)
+
+write.csv(
+  matriz_relativa,
+  arquivo_relativa,
+  row.names = FALSE,
+  na = "",
+  fileEncoding = "UTF-8"
+)
+
+
+# ============================================================
+# 31. RESULTADOS
+# ============================================================
+
+cat(
+  "\n========================================\n",
+  "MATRIZ DE ABUNDANCIA RELATIVA - CAAPORA\n",
+  "========================================\n",
+  sep = ""
+)
+
+print(resumo)
+
+cat(
+  "\nRESUMO DAS IDENTIFICACOES:\n"
+)
+
+print(resumo_identificacoes)
+
+cat(
+  "\nCONFERENCIA DA ABUNDANCIA RELATIVA:\n"
+)
+
+print(
+  table(checagem_relativa$status)
+)
+
+cat(
+  "\nArquivos gerados:\n",
+  arquivo_abundancia,
+  "\n",
+  arquivo_relativa,
+  "\n",
+  arquivo_diagnostico,
+  "\n",
+  arquivo_relatorio,
+  "\n"
+)
